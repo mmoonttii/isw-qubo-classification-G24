@@ -273,6 +273,37 @@ def fit_normalize(
     if total_rows == 0:
         raise ValueError("The input CSV contains no data rows.")
 
+    # ------------------------------------------------------------------
+    # TARGET VALIDATION — confirm binary {0, 1} values across all chunks
+    # ------------------------------------------------------------------
+    target_unique: set = set()  # may hold int or float before validation
+
+    target_iter = pd.read_csv(
+        input_path,
+        usecols=[target_column],
+        chunksize=_CHUNK_SIZE,
+        low_memory=False,
+    )
+
+    for chunk in target_iter:
+        coerced = pd.to_numeric(chunk[target_column], errors="coerce").dropna()
+        target_unique.update(coerced.unique().tolist())
+
+    # Accept only values that are numerically equal to 0 or 1 (not merely
+    # int-truncatable to them, e.g. 0.5 must not silently pass).
+    unexpected = {v for v in target_unique if v not in (0, 1)}
+    if unexpected:
+        raise ValueError(
+            f"Target column '{target_column}' must contain only binary values "
+            f"(0 and 1), but found unexpected values: {sorted(unexpected)}"
+        )
+
+    logger.info(
+        "Target validation passed: unique values in '%s' = %s",
+        target_column,
+        sorted(int(v) for v in target_unique),
+    )
+    
     # Finalise variance → population std (ddof=1, consistent with sklearn)
     with np.errstate(invalid="ignore", divide="ignore"):
         variance = np.where(

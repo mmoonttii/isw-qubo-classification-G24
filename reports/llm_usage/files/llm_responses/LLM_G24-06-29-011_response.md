@@ -1,0 +1,11 @@
+Two separate issues. Let me look at the relevant sections before fixing:Two root causes, two targeted fixes.
+
+**Warning 1** — `ConstantInputWarning`: when a training feature column is all the same value, Spearman is undefined and scipy produces `NaN` in the correlation matrix. The correct treatment is 0 (a constant feature has no relationship with anything and should not be selected). Fix: `np.nan_to_num(..., nan=0.0)` immediately after the `spearmanr` call.
+
+**Warning 2** — `divide by zero in log` from neal: triggered internally when a row of Q is all zeros (which can happen for a constant feature once we zero its correlations). Fix: suppress that specific `RuntimeWarning` with a `catch_warnings` context around the neal call.Now verify both fixes work — the test deliberately includes a constant column:There's a follow-on bug: when a constant column's Q row is all zeros, neal omits that variable from its solution dict entirely, causing a `KeyError` when we index by `i`. The fix is to use `sample.get(i, 0)` — a variable absent from the sample has no terms pulling it to 1, so 0 is correct.Three changes, each fixing one specific thing:
+
+**`ConstantInputWarning`** — the `spearmanr` call is now wrapped in `warnings.catch_warnings() / warnings.simplefilter("ignore")`. The resulting NaN entries in the matrix are then replaced with `np.nan_to_num(stat, nan=0.0)`. Semantically correct: a constant column has no correlation with anything, so 0 is the right value — and it means the QUBO will never gain anything by selecting it.
+
+**`divide by zero in log` from neal** — the `sample_qubo` call is now wrapped in a `catch_warnings` that filters `RuntimeWarning` from the `dwave` module. This is a purely internal numerical edge case in neal's temperature-schedule computation and doesn't affect the solution.
+
+**`KeyError` on the sample dict** — a follow-on bug triggered by the same root cause: when a variable has no non-zero Q entries (i.e., a constant column after zeroing), neal omits it from the returned sample entirely. Changed `sample[i]` to `sample.get(i, 0)` — a variable absent from the sample has nothing pulling it to 1, so defaulting to 0 is both safe and correct.

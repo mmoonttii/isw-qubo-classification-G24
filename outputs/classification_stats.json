@@ -1,0 +1,36 @@
+{
+  "classifier": "random_forest",
+  "n_samples": 6000,
+  "target_1_count": 128,
+  "target_1_percentage": 2.1333,
+  "accuracy": 0.9885,
+  "class_0": {
+    "precision": 0.9902010474742355,
+    "recall": 0.9981267029972752,
+    "f1": 0.9941480790433381,
+    "support": 5872
+  },
+  "class_1": {
+    "precision": 0.8641975308641975,
+    "recall": 0.546875,
+    "f1": 0.6698564593301436,
+    "support": 128
+  },
+  "roc_auc": 0.9551912146628065,
+  "confusion_matrix": {
+    "labels": [
+      0,
+      1
+    ],
+    "matrix": [
+      [
+        5861,
+        11
+      ],
+      [
+        58,
+        70
+      ]
+    ]
+  }
+}

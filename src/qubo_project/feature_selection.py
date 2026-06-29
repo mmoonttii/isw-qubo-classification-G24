@@ -33,6 +33,7 @@ Fixes applied vs. previous version
 # ── IMPORTS ──────────────────────────────────────────────────────────────────
 import os
 import json
+from pathlib import Path
 import time
 import warnings
 import argparse
@@ -51,10 +52,42 @@ _SA_STEPS_PER_N: int = 500
 
 # ── OUTPUT PATH HELPER ────────────────────────────────────────────────────────
 
-def _to_output_path(filename: str) -> str:
-    """Route a bare filename (or relative path) into the outputs/ directory."""
-    os.makedirs("outputs", exist_ok=True)
-    return os.path.join("outputs", os.path.basename(filename))
+def _resolve_outputs_dir() -> Path:
+    """Return the absolute path to the ``outputs/`` directory.
+
+    The function walks upward from this file's location until it finds
+    a directory that contains an ``outputs/`` sub-directory (repository
+    root) or falls back to ``./outputs`` relative to the current working
+    directory.  Either way, the directory is created if it does not yet
+    exist.
+    """
+    here = Path(__file__).resolve().parent
+    # Walk up at most 6 levels looking for the repo root
+    candidate = here
+    for _ in range(6):
+        outputs = candidate / "outputs"
+        if outputs.is_dir():
+            return outputs
+        candidate = candidate.parent
+
+    # Fallback: outputs/ next to cwd
+    fallback = Path.cwd() / "outputs"
+    fallback.mkdir(parents=True, exist_ok=True)
+    return fallback
+
+
+def _to_output_path(user_path: str) -> Path:
+    """Resolve *user_path* to a path inside the ``outputs/`` directory.
+
+    If *user_path* is already an absolute path or contains directory
+    components, only the filename part is extracted and placed inside
+    ``outputs/``.  This guarantees no absolute paths leak into the code
+    while still honouring the caller's desired filename.
+    """
+    outputs_dir = _resolve_outputs_dir()
+    outputs_dir.mkdir(parents=True, exist_ok=True)
+    filename = Path(user_path).name  # keep only the basename
+    return outputs_dir / filename
 
 
 # ── QUBO MATRIX BUILDER ───────────────────────────────────────────────────────

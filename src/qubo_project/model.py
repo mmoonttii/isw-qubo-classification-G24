@@ -317,18 +317,42 @@ def predict(
 
 if __name__ == "__main__":
 
-    def _to_outputs(path: str) -> str:
-        """
-        Resolve a bare filename to outputs/<filename>.
+    def _resolve_outputs_dir() -> Path:
+        """Return the absolute path to the ``outputs/`` directory.
 
-        If the caller already supplied a directory component (e.g.
-        'outputs/model.joblib' or '/abs/path/model.joblib') the path is
-        returned unchanged so that explicit paths are never mangled.
+        The function walks upward from this file's location until it finds
+        a directory that contains an ``outputs/`` sub-directory (repository
+        root) or falls back to ``./outputs`` relative to the current working
+        directory.  Either way, the directory is created if it does not yet
+        exist.
         """
-        p = Path(path)
-        if p.parent == Path("."):           # no directory component
-            return str(Path("outputs") / p)
-        return path
+        here = Path(__file__).resolve().parent
+        # Walk up at most 6 levels looking for the repo root
+        candidate = here
+        for _ in range(6):
+            outputs = candidate / "outputs"
+            if outputs.is_dir():
+                return outputs
+            candidate = candidate.parent
+
+        # Fallback: outputs/ next to cwd
+        fallback = Path.cwd() / "outputs"
+        fallback.mkdir(parents=True, exist_ok=True)
+        return fallback
+
+
+    def _to_output_path(user_path: str) -> Path:
+        """Resolve *user_path* to a path inside the ``outputs/`` directory.
+
+        If *user_path* is already an absolute path or contains directory
+        components, only the filename part is extracted and placed inside
+        ``outputs/``.  This guarantees no absolute paths leak into the code
+        while still honouring the caller's desired filename.
+        """
+        outputs_dir = _resolve_outputs_dir()
+        outputs_dir.mkdir(parents=True, exist_ok=True)
+        filename = Path(user_path).name  # keep only the basename
+        return outputs_dir / filename
 
     # ------------------------------------------------------------------
     # Top-level parser
@@ -442,18 +466,18 @@ if __name__ == "__main__":
     if args.command == "train":
         train(
             classifier=args.classifier,
-            reducedTrain_csv=_to_outputs(args.in_reduced),
+            reducedTrain_csv=args.in_reduced,
             target_column=args.target,
-            model_path=_to_outputs(args.out_model),
-            metrics_json=_to_outputs(args.out_metrics),
+            model_path=_to_output_path(args.out_model),
+            metrics_json=_to_output_path(args.out_metrics),
             seed=args.seed,
         )
 
     elif args.command == "predict":
         predict(
-            reduced_Test_csv=_to_outputs(args.input_testset),
+            reduced_Test_csv=args.input_testset,
             target_column=args.target,
-            model_path=_to_outputs(args.model),
-            predictions_csv=_to_outputs(args.out_predictions),
-            classif_stats_json=_to_outputs(args.out_stats),
+            model_path=_to_output_path(args.model),
+            predictions_csv=_to_output_path(args.out_predictions),
+            classif_stats_json=_to_output_path(args.out_stats),
         )

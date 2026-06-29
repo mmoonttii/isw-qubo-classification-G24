@@ -1,0 +1,12 @@
+{
+  "classifier": "random_forest",
+  "seed": 42,
+  "training_dataset": "../../outputs/training_reduced.csv",
+  "target_column": "target",
+  "model_path": "/Users/monti/Projects/isw-qubo-classification-G24/outputs/model.joblib",
+  "n_samples": 14000,
+  "n_features": 18,
+  "target_1_percentage": 1.4571,
+  "dataset_input_time": 0.042,
+  "training_time": 0.2881
+}

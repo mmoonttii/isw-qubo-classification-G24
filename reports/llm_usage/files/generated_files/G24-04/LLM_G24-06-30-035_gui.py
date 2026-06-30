@@ -7,11 +7,17 @@ or:
     python -m qubo_project.gui
 
 ─────────────────────────────────────────────────────────────────────────────
-PART 1 of 2 — Implements:
+Implements:
   • Sidebar  : dataset upload, pipeline status tracker, global controls
-  • Phase 1  : Preprocessing  (fit_normalize)
-  • Phase 2  : Feature Selection  (select_features + plotly alpha chart)
-  • Phase 3/4: Placeholder panels with phase-gate banners
+  • Phase 1  : Preprocessing       (fit_normalize)
+  • Phase 2  : Feature Selection   (select_features + plotly alpha chart)
+  • Phase 3  : Training            (train — classifier dropdown, metrics)
+  • Phase 4  : Prediction          (predict — metrics, confusion matrix,
+                                     predictions.csv preview & download)
+
+Each phase is strictly gated on st.session_state: a phase's controls only
+render once every prior phase has completed successfully, and re-running an
+earlier phase invalidates every phase that depended on it.
 ─────────────────────────────────────────────────────────────────────────────
 """
 
@@ -24,7 +30,6 @@ import time
 from pathlib import Path
 
 import pandas as pd
-from streamlit_theme import st_theme
 import streamlit as st
 
 # ── PATH SETUP ────────────────────────────────────────────────────────────────
@@ -45,6 +50,20 @@ try:
 except ImportError as _exc:
     _BACKEND_OK  = False
     _BACKEND_ERR = str(_exc)
+    # Fallback so the GUI can still render its layout (with controls
+    # disabled) even if the backend modules can't be imported.
+    CLASSIFIERS = {
+        "random_forest": None,
+        "logistic_regression": None,
+        "gradient_boosting": None,
+    }
+
+# Friendly display labels for the classifier dropdown.
+_CLASSIFIER_LABELS: dict = {
+    "random_forest":       "Random Forest",
+    "logistic_regression": "Logistic Regression",
+    "gradient_boosting":   "Gradient Boosting",
+}
 
 # ── PAGE CONFIG  (must be the very first Streamlit call) ─────────────────────
 st.set_page_config(
@@ -74,24 +93,19 @@ st.set_page_config(
 # instead, so the two can never disagree.
 
 def _detect_theme_base() -> str:
-    """
-    Detect the active Streamlit theme ('light' or 'dark').
-    Uses `st_theme()` to force a rerun if the user changes the theme in the UI.
-    """
-    # st_theme() returns None on the very first microsecond of load, 
-    # then returns a dict containing the active theme config.
-    theme_info = st_theme()
-    
-    if theme_info is not None and "base" in theme_info:
-        return theme_info["base"]
-    
-    # Fallback for the initial load before JS responds
+    """Best-effort detection of the active Streamlit theme ('light' or 'dark')."""
     try:
-        if st.context.theme.type in ("light", "dark"):
-            return st.context.theme.type
+        theme_type = st.context.theme.type  # Streamlit ≥ 1.36, resolves "auto" too
+        if theme_type in ("light", "dark"):
+            return theme_type
     except Exception:
         pass
-        
+    try:
+        base = st.get_option("theme.base")
+        if base in ("light", "dark"):
+            return base
+    except Exception:
+        pass
     return "dark"
 
 
@@ -380,6 +394,61 @@ _CSS = """
     margin: .85rem 0 .4rem;
 }
 
+/* ── HIGHLIGHT STAT ROW (Training: time + dataset size) ─────────── */
+.stat-highlight-row {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: .9rem;
+    margin: .9rem 0 1.3rem;
+}
+.stat-highlight-card {
+    background: linear-gradient(135deg, var(--accent-glow), transparent 70%);
+    border: 1px solid var(--accent-edge);
+    border-radius: var(--radius);
+    padding: 1.1rem 1.3rem 1.2rem;
+}
+.stat-highlight-card .shc-label {
+    font-size: .72rem; text-transform: uppercase; letter-spacing: .08em;
+    color: var(--text-muted); margin-bottom: .35rem;
+}
+.stat-highlight-card .shc-value {
+    font-size: 2rem; font-weight: 800; color: var(--accent);
+    font-family: var(--mono); line-height: 1.1;
+}
+.stat-highlight-card .shc-unit { font-size: .78rem; color: var(--text-muted); margin-top: .2rem; }
+
+/* ── CONFUSION MATRIX ─────────────────────────────────────────────── */
+.cm-grid {
+    display: grid;
+    grid-template-columns: 34px repeat(2, 1fr);
+    grid-template-rows: 28px repeat(2, 1fr);
+    gap: 6px;
+    max-width: 380px;
+    margin: .6rem 0 .3rem;
+}
+.cm-corner { }
+.cm-header {
+    font-size: .68rem; font-weight: 700; text-transform: uppercase;
+    letter-spacing: .05em; color: var(--text-muted);
+    display: flex; align-items: center; justify-content: center;
+    text-align: center;
+}
+.cm-row-label {
+    writing-mode: vertical-rl; transform: rotate(180deg);
+    font-size: .68rem; font-weight: 700; text-transform: uppercase;
+    letter-spacing: .05em; color: var(--text-muted);
+    display: flex; align-items: center; justify-content: center;
+}
+.cm-cell {
+    border-radius: 8px;
+    padding: .9rem .6rem;
+    text-align: center;
+}
+.cm-cell .cm-value { font-size: 1.55rem; font-weight: 800; font-family: var(--mono); line-height: 1.1; }
+.cm-cell .cm-label { font-size: .65rem; text-transform: uppercase; letter-spacing: .05em; opacity: .85; margin-top: .3rem; }
+.cm-correct   { background: var(--ok-bg);  color: var(--ok-clr);  border: 1px solid var(--ok-bg); }
+.cm-incorrect { background: rgba(255,107,107,.10); color: var(--err-clr); border: 1px solid rgba(255,107,107,.22); }
+
 </style>
 """
 
@@ -405,20 +474,15 @@ _STATE_DEFAULTS: dict = {
     "reduced_train_csv":       None,
     "reduced_test_csv":        None,
 
-    # Phase 3 — Training  (populated in Part 2)
+    # Phase 3 — Training
     "training_done":  False,
     "training_stats": None,
     "model_path":     None,
 
-    # Phase 4 — Prediction  (populated in Part 2)
-    "prediction_done":  False,
-    "prediction_stats": None,
-
-    # Internal bookkeeping — NOT a pipeline phase. Tracks the (name, size)
-    # signature of the last UploadedFile we actually processed, so we can
-    # tell "still the same upload, just another rerun" apart from "the user
-    # picked a new/different file". See _render_sidebar().
-    "uploaded_signature": None,
+    # Phase 4 — Prediction
+    "prediction_done":     False,
+    "prediction_stats":    None,
+    "predictions_csv_path": None,
 }
 
 
@@ -499,6 +563,43 @@ def _html_chip_list(names: list[str]) -> str:
     return f'<div class="chip-list">{chips}</div>'
 
 
+def _html_stat_highlight_card(label: str, value, unit: str = "") -> str:
+    return (
+        f'<div class="stat-highlight-card">'
+        f'  <div class="shc-label">{label}</div>'
+        f'  <div class="shc-value">{value}</div>'
+        f'  <div class="shc-unit">{unit}</div>'
+        f'</div>'
+    )
+
+
+def _html_stat_highlight_row(*cards: str) -> str:
+    return f'<div class="stat-highlight-row">{"".join(cards)}</div>'
+
+
+def _html_confusion_matrix(confusion: dict) -> str:
+    """Render a 2x2 confusion-matrix grid (TN/FP/FN/TP) with labelled axes."""
+    matrix = confusion.get("matrix", [[0, 0], [0, 0]])
+    (tn, fp), (fn, tp) = matrix[0], matrix[1]
+    return (
+        '<div class="cm-grid">'
+        '  <div class="cm-corner"></div>'
+        '  <div class="cm-header">Predicted&nbsp;0</div>'
+        '  <div class="cm-header">Predicted&nbsp;1</div>'
+        '  <div class="cm-row-label">Actual&nbsp;0</div>'
+        f' <div class="cm-cell cm-correct"><div class="cm-value">{tn:,}</div>'
+        '     <div class="cm-label">True Negative</div></div>'
+        f' <div class="cm-cell cm-incorrect"><div class="cm-value">{fp:,}</div>'
+        '     <div class="cm-label">False Positive</div></div>'
+        '  <div class="cm-row-label">Actual&nbsp;1</div>'
+        f' <div class="cm-cell cm-incorrect"><div class="cm-value">{fn:,}</div>'
+        '     <div class="cm-label">False Negative</div></div>'
+        f' <div class="cm-cell cm-correct"><div class="cm-value">{tp:,}</div>'
+        '     <div class="cm-label">True Positive</div></div>'
+        '</div>'
+    )
+
+
 def _html_pipeline_status() -> str:
     phases = [
         ("Preprocessing",     "preprocessing_done"),
@@ -561,22 +662,7 @@ def _render_sidebar() -> None:
         )
 
         if uploaded is not None:
-            # `st.file_uploader` returns the SAME UploadedFile object on
-            # EVERY rerun for as long as it stays attached to the widget —
-            # not only on the run where the user picked it. If we called
-            # _handle_upload() unconditionally here, it would fire again on
-            # every single rerun the app performs afterwards — including
-            # the reruns _run_preprocessing()/_run_feature_selection() now
-            # trigger on success — and _handle_upload() resets every
-            # downstream phase flag to False. That is precisely what caused
-            # Phase 2 to "complete in the backend, then reset in the UI".
-            #
-            # Fix: only treat it as a genuinely NEW upload if its (name,
-            # size) signature differs from the last one we processed.
-            signature = (uploaded.name, uploaded.size)
-            if signature != st.session_state.uploaded_signature:
-                _handle_upload(uploaded)
-                st.session_state.uploaded_signature = signature
+            _handle_upload(uploaded)
 
         # Dataset info chips
         if st.session_state.dataset_path and st.session_state.dataset_preview is not None:
@@ -767,20 +853,10 @@ def _run_preprocessing(target_column: str, min_perc_valid: float) -> None:
 
         except FileNotFoundError as exc:
             st.error(f"**File not found:** {exc}")
-            return
         except ValueError as exc:
             st.error(f"**Validation error:** {exc}")
-            return
         except Exception as exc:
             st.error(f"**Unexpected error:** {exc}")
-            return
-
-    # Success: force an immediate rerun so every widget that reads
-    # `preprocessing_done` — most importantly the sidebar pipeline
-    # tracker, which was already drawn before this function ran — picks
-    # up the new state right away instead of waiting for the next
-    # user-triggered interaction.
-    st.rerun()
 
 
 def _render_preprocessing_results(stats: dict) -> None:
@@ -962,21 +1038,12 @@ def _run_feature_selection(
     except FileNotFoundError as exc:
         progress.empty()
         st.error(f"**File not found:** {exc}")
-        return
     except ValueError as exc:
         progress.empty()
         st.error(f"**Validation error:** {exc}")
-        return
     except Exception as exc:
         progress.empty()
         st.error(f"**Unexpected error during QUBO optimisation:** {exc}")
-        return
-
-    # Success: same reasoning as _run_preprocessing() — sync the sidebar
-    # (and everything else reading session_state) immediately, rather
-    # than leaving Phase 3 / Phase 4 gates and the pipeline tracker
-    # showing stale info until another widget interaction forces a redraw.
-    st.rerun()
 
 
 def _render_feature_selection_results(fs: dict) -> None:
@@ -1166,7 +1233,7 @@ def _render_alpha_chart(ottim_path: Path, fs: dict) -> None:
 
 
 # ═════════════════════════════════════════════════════════════════════════════
-# PHASE 3 — TRAINING  (placeholder, implemented in Part 2)
+# PHASE 3 — TRAINING
 # ═════════════════════════════════════════════════════════════════════════════
 
 def _tab_training() -> None:
@@ -1178,6 +1245,7 @@ def _tab_training() -> None:
         unsafe_allow_html=True,
     )
 
+    # ── Phase gate ─────────────────────────────────────────────────────────
     if not st.session_state.feature_selection_done:
         st.markdown(
             _html_lock_banner(
@@ -1188,33 +1256,136 @@ def _tab_training() -> None:
         )
         return
 
-    # ── Will be fully implemented in Part 2 ───────────────────────────────
-    st.markdown(
-        '<div class="info-box">'
-        "⚙️ &nbsp;Training controls will be available in <strong>Part 2</strong> of the GUI. "
-        "The backend <code>train()</code> function is already implemented in "
-        "<code>src/qubo_project/model.py</code>."
-        "</div>",
-        unsafe_allow_html=True,
-    )
-
     # Show what Phase 2 produced, so the user can verify before training
     if st.session_state.feature_selection_stats:
-        with st.expander("📋 Feature selection summary (Phase 2 output)", expanded=True):
-            fs = st.session_state.feature_selection_stats
-            col1, col2, col3 = st.columns(3)
-            col1.metric("Selected features", fs.get("n_selected", "—"))
-            col2.metric("Training samples",  f"{fs.get('training_dataset_size', 0):,}")
-            col3.metric("Test samples",       f"{fs.get('test_dataset_size',     0):,}")
-            st.caption(
-                f"Algorithm: `{fs.get('algorithm', 'N/A')}` · "
-                f"Seed: `{fs.get('seed', 'N/A')}` · "
-                f"Best α: `{fs.get('alpha', 0):.4f}`"
+        fs = st.session_state.feature_selection_stats
+        st.markdown(
+            f'<div class="info-box">'
+            f'Training on the <strong>{fs.get("n_selected", "—")}</strong> features '
+            f'selected in Phase 2 — '
+            f'<strong>{fs.get("training_dataset_size", 0):,}</strong> training rows.'
+            f'</div>',
+            unsafe_allow_html=True,
+        )
+
+    # ── Parameter card ─────────────────────────────────────────────────────
+    st.markdown('<div class="param-card">', unsafe_allow_html=True)
+    st.markdown("<h4>⚙️ Classifier Parameters</h4>", unsafe_allow_html=True)
+
+    col1, col2 = st.columns([2, 1], gap="large")
+    with col1:
+        classifier_options = list(CLASSIFIERS.keys())
+        classifier_key = st.selectbox(
+            "Classifier",
+            options=classifier_options,
+            format_func=lambda k: _CLASSIFIER_LABELS.get(k, k),
+            help="Choose which of the three implemented classifiers to train.",
+        )
+    with col2:
+        train_seed = int(st.number_input(
+            "Random seed",
+            min_value=0, max_value=2**31 - 1, value=42, step=1,
+            help="Seed passed to the classifier for reproducible training.",
+            key="train_seed_input",
+        ))
+
+    st.markdown("</div>", unsafe_allow_html=True)
+
+    # ── Inline validation ────────────────────────────────────────────────
+    warnings_list: list[str] = []
+    if not st.session_state.reduced_train_csv or not Path(st.session_state.reduced_train_csv).exists():
+        warnings_list.append(
+            "Reduced training dataset not found on disk — re-run Phase 2 — Feature Selection."
+        )
+    for w in warnings_list:
+        st.warning(w)
+
+    # ── Run ────────────────────────────────────────────────────────────────
+    run_disabled = bool(warnings_list) or not _BACKEND_OK
+
+    if st.button("▶  Start Training", type="primary", disabled=run_disabled, key="btn_train"):
+        _run_training(classifier_key, train_seed)
+
+    # ── Results ────────────────────────────────────────────────────────────
+    if st.session_state.training_done and st.session_state.training_stats:
+        _render_training_results(st.session_state.training_stats)
+
+
+def _run_training(classifier_key: str, seed: int) -> None:
+    # Defensive re-check — protects against the (unlikely) case where
+    # session state was reset mid-action, e.g. another tab triggered a
+    # pipeline reset between this tab rendering and the button click.
+    if not st.session_state.feature_selection_done:
+        st.warning(
+            "⚠️ Feature selection is no longer marked complete. "
+            "Please re-run Phase 2 before training."
+        )
+        return
+
+    with st.spinner(f"Training {_CLASSIFIER_LABELS.get(classifier_key, classifier_key)} …"):
+        try:
+            train(
+                classifier        = classifier_key,
+                reducedTrain_csv  = st.session_state.reduced_train_csv,
+                target_column     = st.session_state.target_column,
+                model_path        = str(_outputs_dir() / "model.joblib"),
+                metrics_json      = str(_outputs_dir() / "training_metrics.json"),
+                seed              = seed,
             )
+
+            with open(_outputs_dir() / "training_metrics.json", encoding="utf-8") as fh:
+                metrics = json.load(fh)
+
+            st.session_state.training_done  = True
+            st.session_state.training_stats = metrics
+            st.session_state.model_path     = str(_outputs_dir() / "model.joblib")
+
+            # Invalidate downstream phase
+            st.session_state.prediction_done      = False
+            st.session_state.prediction_stats     = None
+            st.session_state.predictions_csv_path = None
+
+        except FileNotFoundError as exc:
+            st.error(f"**File not found:** {exc}")
+        except ValueError as exc:
+            st.error(f"**Validation error:** {exc}")
+        except Exception as exc:
+            st.error(f"**Unexpected error during training:** {exc}")
+
+
+def _render_training_results(stats: dict) -> None:
+    classifier_label = _CLASSIFIER_LABELS.get(stats.get("classifier", ""), stats.get("classifier", "—"))
+    st.success(f"✓ Training complete — **{classifier_label}** model saved to `outputs/model.joblib`.")
+
+    # Headline: training time & dataset size, called out prominently
+    highlight_html = _html_stat_highlight_row(
+        _html_stat_highlight_card(
+            "Training Time", f"{stats.get('training_time', 0):.2f}", "seconds"
+        ),
+        _html_stat_highlight_card(
+            "Dataset Size", f"{stats.get('n_samples', 0):,}", "training rows"
+        ),
+    )
+    st.markdown(highlight_html, unsafe_allow_html=True)
+
+    # Remaining details
+    grid_html = _html_metric_grid(
+        _html_metric_card("Classifier",      classifier_label),
+        _html_metric_card("Features Used",   stats.get("n_features", "—")),
+        _html_metric_card("Target = 1 Rate", f"{stats.get('target_1_percentage', 0):.2f}", "%"),
+        _html_metric_card("Seed",            stats.get("seed", "—")),
+        _html_metric_card("Read Time",       f"{stats.get('dataset_input_time', 0):.3f}", "s"),
+    )
+    st.markdown(grid_html, unsafe_allow_html=True)
+
+    st.caption(f"Model file: `{stats.get('model_path', '—')}`")
+
+    with st.expander("📄 Full training metrics (JSON)", expanded=False):
+        st.json(stats)
 
 
 # ═════════════════════════════════════════════════════════════════════════════
-# PHASE 4 — PREDICTION  (placeholder, implemented in Part 2)
+# PHASE 4 — PREDICTION
 # ═════════════════════════════════════════════════════════════════════════════
 
 def _tab_prediction() -> None:
@@ -1226,6 +1397,7 @@ def _tab_prediction() -> None:
         unsafe_allow_html=True,
     )
 
+    # ── Phase gate ─────────────────────────────────────────────────────────
     if not st.session_state.training_done:
         st.markdown(
             _html_lock_banner(
@@ -1235,19 +1407,159 @@ def _tab_prediction() -> None:
         )
         return
 
-    st.markdown(
-        '<div class="info-box">'
-        "⚙️ &nbsp;Prediction controls will be available in <strong>Part 2</strong> of the GUI. "
-        "The backend <code>predict()</code> function is already implemented in "
-        "<code>src/qubo_project/model.py</code>."
-        "</div>",
-        unsafe_allow_html=True,
+    if st.session_state.training_stats:
+        ts = st.session_state.training_stats
+        classifier_label = _CLASSIFIER_LABELS.get(ts.get("classifier", ""), ts.get("classifier", "—"))
+        st.markdown(
+            f'<div class="info-box">'
+            f'Evaluating the trained <strong>{classifier_label}</strong> model on the '
+            f'Phase 2 test set.'
+            f'</div>',
+            unsafe_allow_html=True,
+        )
+
+    # ── Inline validation ────────────────────────────────────────────────
+    warnings_list: list[str] = []
+    if not st.session_state.model_path or not Path(st.session_state.model_path).exists():
+        warnings_list.append("Trained model file not found on disk — re-run Phase 3 — Training.")
+    if not st.session_state.reduced_test_csv or not Path(st.session_state.reduced_test_csv).exists():
+        warnings_list.append("Reduced test dataset not found on disk — re-run Phase 2 — Feature Selection.")
+    for w in warnings_list:
+        st.warning(w)
+
+    # ── Run ────────────────────────────────────────────────────────────────
+    run_disabled = bool(warnings_list) or not _BACKEND_OK
+
+    if st.button("▶  Run Prediction", type="primary", disabled=run_disabled, key="btn_predict"):
+        _run_prediction()
+
+    # ── Results ────────────────────────────────────────────────────────────
+    if st.session_state.prediction_done and st.session_state.prediction_stats:
+        _render_prediction_results(st.session_state.prediction_stats)
+        _render_predictions_download()
+
+
+def _run_prediction() -> None:
+    # Defensive re-check, mirrors _run_training().
+    if not st.session_state.training_done:
+        st.warning(
+            "⚠️ Training is no longer marked complete. "
+            "Please re-run Phase 3 before predicting."
+        )
+        return
+
+    with st.spinner("Running predictions on the test set …"):
+        try:
+            predict(
+                reduced_Test_csv    = st.session_state.reduced_test_csv,
+                target_column       = st.session_state.target_column,
+                model_path          = st.session_state.model_path,
+                predictions_csv     = str(_outputs_dir() / "predictions.csv"),
+                classif_stats_json  = str(_outputs_dir() / "classification_stats.json"),
+            )
+
+            with open(_outputs_dir() / "classification_stats.json", encoding="utf-8") as fh:
+                stats = json.load(fh)
+
+            st.session_state.prediction_done      = True
+            st.session_state.prediction_stats     = stats
+            st.session_state.predictions_csv_path = str(_outputs_dir() / "predictions.csv")
+
+        except FileNotFoundError as exc:
+            st.error(f"**File not found:** {exc}")
+        except ValueError as exc:
+            st.error(f"**Validation error:** {exc}")
+        except Exception as exc:
+            st.error(f"**Unexpected error during prediction:** {exc}")
+
+
+def _render_prediction_results(stats: dict) -> None:
+    classifier_label = _CLASSIFIER_LABELS.get(stats.get("classifier", ""), stats.get("classifier", "—"))
+    st.success(f"✓ Prediction complete — evaluated **{stats.get('n_samples', 0):,}** test samples.")
+
+    # ── Headline metrics — native st.metric, theme-correct automatically ──
+    col1, col2, col3, col4 = st.columns(4)
+    col1.metric("Accuracy", f"{stats.get('accuracy', 0) * 100:.2f}%")
+    col2.metric("ROC-AUC",  f"{stats.get('roc_auc', 0):.4f}")
+    col3.metric("Total Samples", f"{stats.get('n_samples', 0):,}")
+    col4.metric("Target = 1 Rate", f"{stats.get('target_1_percentage', 0):.2f}%")
+
+    st.write("")
+
+    # ── Precision / Recall / F1 comparison — native bar chart ─────────────
+    st.markdown("**Per-class performance**")
+    class_0 = stats.get("class_0", {})
+    class_1 = stats.get("class_1", {})
+    metrics_df = pd.DataFrame(
+        {
+            "Class 0 (reliable)": [
+                class_0.get("precision", 0), class_0.get("recall", 0), class_0.get("f1", 0),
+            ],
+            "Class 1 (at risk)": [
+                class_1.get("precision", 0), class_1.get("recall", 0), class_1.get("f1", 0),
+            ],
+        },
+        index=["Precision", "Recall", "F1"],
+    )
+    st.bar_chart(metrics_df, height=280)
+    st.caption(
+        f"Support — class 0: **{class_0.get('support', 0):,}** samples · "
+        f"class 1: **{class_1.get('support', 0):,}** samples."
     )
 
+    st.write("")
 
-# ═════════════════════════════════════════════════════════════════════════════
-# ENTRY POINT
-# ═════════════════════════════════════════════════════════════════════════════
+    # ── Confusion matrix ────────────────────────────────────────────────
+    st.markdown(f"**Confusion matrix** ({classifier_label})")
+    confusion = stats.get("confusion_matrix", {})
+    cm_col, _spacer = st.columns([1, 1])
+    with cm_col:
+        st.markdown(_html_confusion_matrix(confusion), unsafe_allow_html=True)
+
+    with st.expander("📊 Raw confusion matrix", expanded=False):
+        labels = confusion.get("labels", [0, 1])
+        matrix = confusion.get("matrix", [[0, 0], [0, 0]])
+        cm_df = pd.DataFrame(
+            matrix,
+            index=[f"Actual {l}" for l in labels],
+            columns=[f"Predicted {l}" for l in labels],
+        )
+        st.dataframe(cm_df, use_container_width=True)
+
+    with st.expander("📄 Full classification statistics (JSON)", expanded=False):
+        st.json(stats)
+
+
+def _render_predictions_download() -> None:
+    """Let the user preview and download the full predictions.csv file."""
+    path_str = st.session_state.predictions_csv_path
+    if not path_str:
+        return
+
+    pred_path = Path(path_str)
+    if not pred_path.exists():
+        st.warning("Predictions file not found on disk — please re-run Phase 4.")
+        return
+
+    st.markdown("**Predictions output**")
+    try:
+        preview_df = pd.read_csv(pred_path, nrows=200)
+        with st.expander(f"👁 Preview first {len(preview_df)} rows of `predictions.csv`", expanded=False):
+            st.dataframe(preview_df, use_container_width=True, height=280)
+
+        st.download_button(
+            label="⬇  Download predictions.csv",
+            data=pred_path.read_bytes(),
+            file_name="predictions.csv",
+            mime="text/csv",
+            use_container_width=False,
+        )
+        st.caption(f"File location: `{pred_path}`")
+
+    except Exception as exc:
+        st.error(f"Could not read predictions file: {exc}")
+
+
 
 def main() -> None:
     _init_state()

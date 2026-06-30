@@ -36,18 +36,18 @@ students:
 
 team_work:
   work_distribution:
-    design_percent: null
-    preprocessing_percent: null
-    qubo_feature_selection_percent: null
-    classification_percent: null
-    testing_percent: null
-    gui_percent: null
-    documentation_percent: null
+    design_percent: 100
+    preprocessing_percent: 100
+    qubo_feature_selection_percent: 100
+    classification_percent: 100
+    testing_percent: 100
+    gui_percent: 100
+    documentation_percent: 100
   collaboration_mode:
     # valori suggeriti: "pair_programming", "divisione_per_moduli", "mista"
     type: pair_programming
     notes: null
-    remote_collaboration_perc: 0   # Percentuale di lavoro in call (0-100)
+    remote_collaboration_perc: 5   # Percentuale di lavoro in call (0-100)
   estimated_total_hours:
     student_1_hours: null
     student_2_hours: null
@@ -96,26 +96,31 @@ llm_usage_summary:
       version: 4.6
       paid_subscription: false
       usage_level_0_to_3:   # valori da 0 (non usato) a 3 (usatissimo)     
-        value: 3 
+        value: 3
+    - name: Gemini Pro
+      version: 3.1
+      paid_subscription: true
+      usage_level_0_to_3:   # valori da 0 (non usato) a 3 (usatissimo)     
+        value: 1
   phases_where_llm_was_used:
     requirements_understanding:
       usage_level_0_to_3: null
       usefulness_1_to_5: null
       notes: null
     preprocessing:
-      usage_level_0_to_3: null
-      usefulness_1_to_5: null
-      notes: null
+      usage_level_0_to_3: 3
+      usefulness_1_to_5: 5
+      notes: we used Gemini to generate prompts and Claude to generate the actual code
     qubo_formulation:
-      usage_level_0_to_3: null
+      usage_level_0_to_3: 3
       usefulness_1_to_5: null
       notes: null
     optimizer_selection:
-      usage_level_0_to_3: null
+      usage_level_0_to_3: 3
       usefulness_1_to_5: null
       notes: null
     classifier_selection:
-      usage_level_0_to_3: null
+      usage_level_0_to_3: 3
       usefulness_1_to_5: null
       notes: null
     debugging:
@@ -123,17 +128,17 @@ llm_usage_summary:
       usefulness_1_to_5: null
       notes: null
     testing:
-      usage_level_0_to_3: null
-      usefulness_1_to_5: null
-      notes: null
+      usage_level_0_to_3: 3
+      usefulness_1_to_5: 5
+      notes: we used Gemini to generate prompts and Claude to generate the actual code
     documentation:
-      usage_level_0_to_3: null
+      usage_level_0_to_3: 1
       usefulness_1_to_5: null
       notes: null
     gui:
-      usage_level_0_to_3: null
-      usefulness_1_to_5: null
-      notes: null
+      usage_level_0_to_3: 3
+      usefulness_1_to_5: 5
+      notes: we used Gemini to generate many prompts, other prompts were written by hand and we used Claude to generate the actual code
   estimated_llm_contribution:
     percent_code_generated_or_suggested_by_llm: null
     percent_code_accepted_without_major_changes: null
@@ -141,10 +146,10 @@ llm_usage_summary:
   human_verification:
     # descrivere come il gruppo ha controllato gli output dell'LLM. (yes/partially/no)
     methods_used:
-      - code_execution: null
+      - code_execution: yes
       - automated_tests: null
       - critical_reading: null
-      - comparison_with_other_llm: null
+      - comparison_with_other_llm: yes
     notes: null
   llm_misleading_outputs:
     encountered: null  # (yes/partially/no)

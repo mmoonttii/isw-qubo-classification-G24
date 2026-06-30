@@ -4,7 +4,8 @@ students:
   - matricola: "66409"
 main_llm_used: "Claude Sonnet 4.6"
 paid_subscription_used: false
-second_llm_used: "*****"
+second_llm_used: "Gemini Pro 3.1"
+paid_subscription_used: true
 third_llm_used: ""
-notes: "Il gruppo ha utilizzato Claude Sonnet 4.6 per la generazione del codice e per la scrittura dei commenti."
+notes: "Il gruppo ha utilizzato Claude Sonnet 4.6 per la generazione del codice e per la scrittura dei commenti." #TODO: rivedi a fine progetto
 project_finished: "false"    # Mettere "true" se consegnato

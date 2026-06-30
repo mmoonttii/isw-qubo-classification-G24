@@ -24,7 +24,6 @@ import time
 from pathlib import Path
 
 import pandas as pd
-from streamlit_theme import st_theme
 import streamlit as st
 
 # ── PATH SETUP ────────────────────────────────────────────────────────────────
@@ -60,147 +59,52 @@ st.set_page_config(
 # Theme:  deep-charcoal background · electric-teal accent
 # Signature element: pipeline status tracker with animated step badges
 # ═════════════════════════════════════════════════════════════════════════════
-# ═════════════════════════════════════════════════════════════════════════════
-# THEME DETECTION
-# ═════════════════════════════════════════════════════════════════════════════
-#
-# IMPORTANT: this app used to theme itself with @media (prefers-color-scheme),
-# which only reacts to the OS/browser preference. Streamlit has its OWN theme
-# switcher (☰ menu → Settings → Theme), independent of the OS setting, and
-# hosting environments often pin one explicitly. When the in-app theme and the
-# OS preference disagree, the media query fires for the wrong one — Streamlit
-# repaints the page background itself (light), while our custom CSS stayed on
-# its dark-mode default (light-on-light text). We ask Streamlit directly
-# instead, so the two can never disagree.
+_CSS = """
+<style>
 
-def _detect_theme_base() -> str:
-    """
-    Detect the active Streamlit theme ('light' or 'dark').
-    Uses `st_theme()` to force a rerun if the user changes the theme in the UI.
-    """
-    # st_theme() returns None on the very first microsecond of load, 
-    # then returns a dict containing the active theme config.
-    theme_info = st_theme()
-    
-    if theme_info is not None and "base" in theme_info:
-        return theme_info["base"]
-    
-    # Fallback for the initial load before JS responds
-    try:
-        if st.context.theme.type in ("light", "dark"):
-            return st.context.theme.type
-    except Exception:
-        pass
-        
-    return "dark"
-
-
-# ═════════════════════════════════════════════════════════════════════════════
-# DESIGN SYSTEM — injected as a single <style> block
-# Theme:  deep-charcoal / electric-teal (dark)  ·  off-white / forest-teal (light)
-# Signature element: pipeline status tracker with animated step badges
-# ═════════════════════════════════════════════════════════════════════════════
-
-# All colour decisions live here, keyed by the value _detect_theme_base()
-# returns. A matching :root block is generated at render time — deterministic,
-# and always in sync with whatever Streamlit is actually displaying.
-_THEME_TOKENS: dict = {
-    "dark": {
-        # Accent — electric teal
-        "accent":      "#00C9A7",
-        "accent-glow": "rgba(0,201,167,.16)",
-        "accent-edge": "rgba(0,201,167,.30)",
-        # Surfaces — semi-transparent so they float above any bg
-        "card-bg":     "rgba(255,255,255,.045)",
-        "card-border": "rgba(255,255,255,.09)",
-        # Typography
-        "text-primary": "#E6EDF3",
-        "text-muted":   "#8B949E",
-        # Tab bar
-        "tab-bar-bg": "rgba(255,255,255,.04)",
-        "tab-color":  "rgba(255,255,255,.48)",
-        # Status — ok / warning / info / error
-        "ok-clr": "#3FB950",   "ok-bg":   "rgba(63,185,80,.11)",
-        "warn-clr": "#F0883E", "warn-bg": "rgba(240,136,62,.09)", "warn-bd": "rgba(240,136,62,.28)",
-        "blue-clr": "#58A6FF", "info-bg": "rgba(88,166,255,.08)", "info-bd": "rgba(88,166,255,.22)",
-        "err-clr": "#FF6B6B",
-        # Pipeline step states
-        "ps-done-bg":       "rgba(63,185,80,.10)",
-        "ps-pending-clr":   "rgba(255,255,255,.38)",
-        "ps-pending-badge": "rgba(255,255,255,.10)",
-        # Text placed ON TOP of var(--accent) — bright teal → black reads best.
-        "accent-contrast": "#000",
-    },
-    "light": {
-        # Accent — teal shifted darker for contrast on white
-        "accent":      "#0A8A74",
-        "accent-glow": "rgba(10,138,116,.12)",
-        "accent-edge": "rgba(10,138,116,.25)",
-        # Surfaces — very subtle dark tint on white
-        "card-bg":     "rgba(0,0,0,.03)",
-        "card-border": "rgba(0,0,0,.10)",
-        # Typography
-        "text-primary": "#1F2328",
-        "text-muted":   "#656D76",
-        # Tab bar
-        "tab-bar-bg": "rgba(0,0,0,.04)",
-        "tab-color":  "rgba(0,0,0,.45)",
-        # Status — ok / warning / info / error
-        "ok-clr": "#1A7F37",   "ok-bg":   "rgba(26,127,55,.08)",
-        "warn-clr": "#9A6700", "warn-bg": "rgba(154,103,0,.07)", "warn-bd": "rgba(154,103,0,.25)",
-        "blue-clr": "#0969DA", "info-bg": "rgba(9,105,218,.07)", "info-bd": "rgba(9,105,218,.20)",
-        "err-clr": "#CF222E",
-        # Pipeline step states
-        "ps-done-bg":       "rgba(26,127,55,.08)",
-        "ps-pending-clr":   "rgba(0,0,0,.35)",
-        "ps-pending-badge": "rgba(0,0,0,.08)",
-        # Light-mode accent (#0A8A74) is a darkened teal, sized for
-        # text-on-white contrast — it is NOT light, so it needs a
-        # light label on top of it, not a dark one.
-        "accent-contrast": "#fff",
-    },
+/* ── TOKENS ─────────────────────────────────────────────────────────────── */
+:root {
+    --bg:           #0D1117;
+    --surface:      #161B22;
+    --surface-alt:  #1C2333;
+    --border:       #30363D;
+    --accent:       #00C9A7;
+    --accent-glow:  rgba(0,201,167,.18);
+    --accent-edge:  rgba(0,201,167,.30);
+    --blue:         #58A6FF;
+    --warn:         #F0883E;
+    --error:        #FF6B6B;
+    --ok:           #3FB950;
+    --text:         #E6EDF3;
+    --muted:        #8B949E;
+    --radius:       10px;
+    --mono:         "JetBrains Mono","Fira Code",ui-monospace,monospace;
 }
 
-
-def _build_root_css(theme: str) -> str:
-    """Render the :root{...} custom-property block for the given theme."""
-    tokens = _THEME_TOKENS.get(theme, _THEME_TOKENS["dark"])
-    declarations = "\n    ".join(f"--{name}: {value};" for name, value in tokens.items())
-    return (
-        "<style>\n:root {\n    "
-        + declarations
-        + "\n    --radius: 10px;"
-          '\n    --mono:   "JetBrains Mono","Fira Code",ui-monospace,monospace;'
-          "\n}\n"
-    )
-
-
-_CSS = """
-
-/* ── GLOBAL ─────────────────────────────────────────────────────── */
+/* ── GLOBAL ─────────────────────────────────────────────────────────────── */
 .main .block-container {
     padding-top: 1.4rem !important;
     max-width: 1300px;
 }
 
-/* ── SIDEBAR — Streamlit controls the background; we just add a
-   divider line so the panel boundary remains visible. ─────────── */
+/* ── SIDEBAR ─────────────────────────────────────────────────────────────── */
 [data-testid="stSidebar"] {
-    border-right: 1px solid var(--card-border);
+    background: var(--surface) !important;
+    border-right: 1px solid var(--border);
 }
 
-/* ── TABS ────────────────────────────────────────────────────────── */
+/* ── TABS ────────────────────────────────────────────────────────────────── */
 .stTabs [data-baseweb="tab-list"] {
     gap: 4px;
-    background: var(--tab-bar-bg) !important;
+    background: var(--surface) !important;
     border-radius: var(--radius);
     padding: 4px;
-    border: 1px solid var(--card-border);
+    border: 1px solid var(--border);
 }
 .stTabs [data-baseweb="tab"] {
     border-radius: 7px !important;
     padding: .4rem 1rem !important;
-    color: var(--tab-color) !important;
+    color: var(--muted) !important;
     font-size: .87rem;
     font-weight: 500;
 }
@@ -212,7 +116,7 @@ _CSS = """
     padding-top: 1.25rem !important;
 }
 
-/* ── BUTTONS ─────────────────────────────────────────────────────── */
+/* ── BUTTONS ─────────────────────────────────────────────────────────────── */
 .stButton > button {
     border-radius: 8px !important;
     font-weight: 600 !important;
@@ -224,50 +128,44 @@ _CSS = """
     box-shadow: 0 4px 14px var(--accent-glow) !important;
 }
 
-/* ── PAGE HEADER ─────────────────────────────────────────────────── */
-.page-title {
-    font-size: 1.55rem; font-weight: 800;
-    letter-spacing: -.03em; margin: 0;
-    color: var(--text-primary);
-}
-.page-subtitle {
-    color: var(--text-muted); font-size: .88rem; margin: .25rem 0 0;
-}
-
-/* ── PHASE HEADER ────────────────────────────────────────────────── */
+/* ── PHASE HEADER ────────────────────────────────────────────────────────── */
 .phase-header {
     display: flex;
     align-items: center;
     gap: .85rem;
     margin-bottom: 1.4rem;
     padding-bottom: .85rem;
-    border-bottom: 1px solid var(--card-border);
+    border-bottom: 1px solid var(--border);
 }
 .phase-number {
     background: var(--accent);
-    color: var(--accent-contrast);
-    width: 38px; height: 38px;
+    color: #000;
+    width: 38px;
+    height: 38px;
     border-radius: 50%;
-    display: flex; align-items: center; justify-content: center;
-    font-weight: 800; font-size: 1.05rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 800;
+    font-size: 1.05rem;
     flex-shrink: 0;
     box-shadow: 0 0 16px var(--accent-glow);
 }
-.phase-title    { font-size: 1.22rem; font-weight: 700; color: var(--text-primary); margin: 0; }
-.phase-subtitle { font-size: .82rem;  color: var(--text-muted);                     margin: 0; }
+.phase-title    { font-size: 1.22rem; font-weight: 700; color: var(--text); margin: 0; }
+.phase-subtitle { font-size: .82rem;  color: var(--muted);                  margin: 0; }
 
-/* ── PARAM CARD ──────────────────────────────────────────────────── */
+/* ── PARAM CARD ─────────────────────────────────────────────────────────── */
 .param-card {
-    background: var(--card-bg);
-    border: 1px solid var(--card-border);
+    background: var(--surface);
+    border: 1px solid var(--border);
     border-left: 3px solid var(--accent);
     border-radius: var(--radius);
     padding: 1.15rem 1.4rem 1.25rem;
     margin-bottom: 1.1rem;
 }
-.param-card h4 { margin: 0 0 .9rem; font-size: 1rem; color: var(--text-primary); }
+.param-card h4 { margin: 0 0 .9rem; font-size: 1rem; color: var(--text); }
 
-/* ── METRIC GRID ─────────────────────────────────────────────────── */
+/* ── METRIC GRID ─────────────────────────────────────────────────────────── */
 .metric-grid {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(148px, 1fr));
@@ -275,42 +173,47 @@ _CSS = """
     margin: 1rem 0 1.15rem;
 }
 .metric-card {
-    background: var(--card-bg);
-    border: 1px solid var(--card-border);
+    background: var(--surface-alt);
+    border: 1px solid var(--border);
     border-radius: 8px;
     padding: .85rem 1rem .9rem;
     text-align: center;
 }
 .metric-card .mc-label {
     font-size: .7rem;
-    color: var(--text-muted);
+    color: var(--muted);
     text-transform: uppercase;
     letter-spacing: .07em;
     margin-bottom: .3rem;
 }
 .metric-card .mc-value {
-    font-size: 1.42rem; font-weight: 700;
+    font-size: 1.42rem;
+    font-weight: 700;
     color: var(--accent);
     font-family: var(--mono);
     line-height: 1.15;
 }
-.metric-card .mc-unit { font-size: .7rem; color: var(--text-muted); margin-top: .15rem; }
+.metric-card .mc-unit {
+    font-size: .7rem;
+    color: var(--muted);
+    margin-top: .15rem;
+}
 
-/* ── PIPELINE STATUS TRACKER ─────────────────────────────────────── */
+/* ── PIPELINE STATUS TRACKER ─────────────────────────────────────────────── */
 .pipeline-step {
-    display: flex; align-items: center; gap: .7rem;
+    display: flex;
+    align-items: center;
+    gap: .7rem;
     padding: .55rem .7rem;
     border-radius: 8px;
     margin-bottom: .35rem;
-    font-size: .86rem; font-weight: 500;
+    font-size: .86rem;
+    font-weight: 500;
 }
-.pipeline-step.ps-done    { background: var(--ps-done-bg);  color: var(--ok-clr);  }
-.pipeline-step.ps-active  {
-    background: var(--accent-glow);
-    color: var(--accent);
-    border: 1px solid var(--accent-edge);
-}
-.pipeline-step.ps-pending { background: transparent; color: var(--ps-pending-clr); }
+.pipeline-step.ps-done    { background: rgba(63,185,80,.11);  color: var(--ok);   }
+.pipeline-step.ps-active  { background: var(--accent-glow);   color: var(--accent);
+                             border: 1px solid var(--accent-edge); }
+.pipeline-step.ps-pending { background: transparent;          color: var(--muted); }
 
 .ps-badge {
     width: 26px; height: 26px;
@@ -318,23 +221,25 @@ _CSS = """
     display: flex; align-items: center; justify-content: center;
     font-size: .76rem; font-weight: 700; flex-shrink: 0;
 }
-.ps-done    .ps-badge { background: var(--ok-clr);           color: #fff; }
-.ps-active  .ps-badge { background: var(--accent);           color: var(--accent-contrast); }
-.ps-pending .ps-badge { background: var(--ps-pending-badge); color: var(--ps-pending-clr); }
+.ps-done   .ps-badge { background: var(--ok);     color: #fff; }
+.ps-active .ps-badge { background: var(--accent); color: #000; }
+.ps-pending .ps-badge{ background: var(--border); color: var(--muted); }
 
-/* ── LOCK BANNER ─────────────────────────────────────────────────── */
+/* ── LOCK BANNER ─────────────────────────────────────────────────────────── */
 .lock-banner {
-    display: flex; align-items: center; gap: .7rem;
-    background: var(--warn-bg);
-    border: 1px solid var(--warn-bd);
+    display: flex;
+    align-items: center;
+    gap: .7rem;
+    background: rgba(240,136,62,.08);
+    border: 1px solid rgba(240,136,62,.28);
     border-radius: var(--radius);
     padding: .95rem 1.2rem;
-    color: var(--warn-clr);
+    color: var(--warn);
     font-size: .9rem;
     margin-bottom: 1rem;
 }
 
-/* ── FEATURE CHIPS ───────────────────────────────────────────────── */
+/* ── FEATURE CHIPS ───────────────────────────────────────────────────────── */
 .chip-list { display: flex; flex-wrap: wrap; gap: .38rem; margin-top: .5rem; }
 .chip {
     background: var(--accent-glow);
@@ -346,40 +251,40 @@ _CSS = """
     font-family: var(--mono);
 }
 
-/* ── INFO BOX ────────────────────────────────────────────────────── */
+/* ── INFO BOX ────────────────────────────────────────────────────────────── */
 .info-box {
-    background: var(--info-bg);
-    border: 1px solid var(--info-bd);
+    background: rgba(88,166,255,.08);
+    border: 1px solid rgba(88,166,255,.25);
     border-radius: 8px;
     padding: .75rem 1rem;
-    color: var(--blue-clr);
+    color: var(--blue);
     font-size: .88rem;
     margin: .75rem 0;
 }
 
-/* ── SIDEBAR LOGO ────────────────────────────────────────────────── */
+/* ── SIDEBAR LOGO ────────────────────────────────────────────────────────── */
 .sidebar-logo {
     text-align: center;
     padding: .4rem 0 1.1rem;
-    border-bottom: 1px solid var(--card-border);
+    border-bottom: 1px solid var(--border);
     margin-bottom: 1rem;
 }
 .sidebar-logo .logo-icon  { font-size: 2.2rem; line-height: 1; }
 .sidebar-logo .logo-title {
     font-weight: 800; font-size: 1.1rem;
-    color: var(--text-primary);
-    letter-spacing: -.02em; margin-top: .3rem;
+    color: var(--text); letter-spacing: -.02em; margin-top: .3rem;
 }
-.sidebar-logo .logo-sub { font-size: .73rem; color: var(--text-muted); margin-top: .15rem; }
+.sidebar-logo .logo-sub   { font-size: .73rem; color: var(--muted); margin-top: .15rem; }
 
-/* ── SECTION LABEL ───────────────────────────────────────────────── */
+/* ── SECTION DIVIDER ─────────────────────────────────────────────────────── */
 .section-label {
-    font-size: .72rem; font-weight: 700;
-    text-transform: uppercase; letter-spacing: .09em;
-    color: var(--text-muted);
+    font-size: .72rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: .09em;
+    color: var(--muted);
     margin: .85rem 0 .4rem;
 }
-
 </style>
 """
 
@@ -413,12 +318,6 @@ _STATE_DEFAULTS: dict = {
     # Phase 4 — Prediction  (populated in Part 2)
     "prediction_done":  False,
     "prediction_stats": None,
-
-    # Internal bookkeeping — NOT a pipeline phase. Tracks the (name, size)
-    # signature of the last UploadedFile we actually processed, so we can
-    # tell "still the same upload, just another rerun" apart from "the user
-    # picked a new/different file". See _render_sidebar().
-    "uploaded_signature": None,
 }
 
 
@@ -561,22 +460,7 @@ def _render_sidebar() -> None:
         )
 
         if uploaded is not None:
-            # `st.file_uploader` returns the SAME UploadedFile object on
-            # EVERY rerun for as long as it stays attached to the widget —
-            # not only on the run where the user picked it. If we called
-            # _handle_upload() unconditionally here, it would fire again on
-            # every single rerun the app performs afterwards — including
-            # the reruns _run_preprocessing()/_run_feature_selection() now
-            # trigger on success — and _handle_upload() resets every
-            # downstream phase flag to False. That is precisely what caused
-            # Phase 2 to "complete in the backend, then reset in the UI".
-            #
-            # Fix: only treat it as a genuinely NEW upload if its (name,
-            # size) signature differs from the last one we processed.
-            signature = (uploaded.name, uploaded.size)
-            if signature != st.session_state.uploaded_signature:
-                _handle_upload(uploaded)
-                st.session_state.uploaded_signature = signature
+            _handle_upload(uploaded)
 
         # Dataset info chips
         if st.session_state.dataset_path and st.session_state.dataset_preview is not None:
@@ -767,20 +651,10 @@ def _run_preprocessing(target_column: str, min_perc_valid: float) -> None:
 
         except FileNotFoundError as exc:
             st.error(f"**File not found:** {exc}")
-            return
         except ValueError as exc:
             st.error(f"**Validation error:** {exc}")
-            return
         except Exception as exc:
             st.error(f"**Unexpected error:** {exc}")
-            return
-
-    # Success: force an immediate rerun so every widget that reads
-    # `preprocessing_done` — most importantly the sidebar pipeline
-    # tracker, which was already drawn before this function ran — picks
-    # up the new state right away instead of waiting for the next
-    # user-triggered interaction.
-    st.rerun()
 
 
 def _render_preprocessing_results(stats: dict) -> None:
@@ -962,21 +836,12 @@ def _run_feature_selection(
     except FileNotFoundError as exc:
         progress.empty()
         st.error(f"**File not found:** {exc}")
-        return
     except ValueError as exc:
         progress.empty()
         st.error(f"**Validation error:** {exc}")
-        return
     except Exception as exc:
         progress.empty()
         st.error(f"**Unexpected error during QUBO optimisation:** {exc}")
-        return
-
-    # Success: same reasoning as _run_preprocessing() — sync the sidebar
-    # (and everything else reading session_state) immediately, rather
-    # than leaving Phase 3 / Phase 4 gates and the pipeline tracker
-    # showing stale info until another widget interaction forces a redraw.
-    st.rerun()
 
 
 def _render_feature_selection_results(fs: dict) -> None:
@@ -1023,44 +888,10 @@ def _render_feature_selection_results(fs: dict) -> None:
         st.json(fs)
 
 
-# NOTE: _detect_theme_base() is defined once, near the top of the file,
-# and reused both for CSS injection (main()) and for this chart's palette.
-
-
-# Chart palettes mirror the CSS tokens in _CSS exactly, so the Plotly
-# figure always matches the surrounding page instead of fighting it.
-_CHART_PALETTES: dict = {
-    "dark": dict(
-        template     = "plotly_dark",
-        paper_bg     = "rgba(0,0,0,0)",
-        plot_bg      = "rgba(255,255,255,.03)",
-        grid         = "#30363D",
-        text         = "#8B949E",
-        accent       = "#00C9A7",
-        blue         = "#58A6FF",
-        marker_edge  = "#0D1117",
-        band_fill    = "rgba(88,166,255,.12)",
-    ),
-    "light": dict(
-        template     = "plotly_white",
-        paper_bg     = "rgba(0,0,0,0)",
-        plot_bg      = "rgba(0,0,0,.015)",
-        grid         = "#D8DEE4",
-        text         = "#656D76",
-        accent       = "#0A8A74",
-        blue         = "#0969DA",
-        marker_edge  = "#FFFFFF",
-        band_fill    = "rgba(9,105,218,.08)",
-    ),
-}
-
-
 def _render_alpha_chart(ottim_path: Path, fs: dict) -> None:
     """Render the α-vs-features chart using Plotly (falls back to st.dataframe)."""
     try:
         import plotly.graph_objects as go
-
-        pal = _CHART_PALETTES[_detect_theme_base()]
 
         df_opt = pd.read_csv(ottim_path).sort_values("alpha")
         target_k  = fs.get("target_k")
@@ -1075,9 +906,9 @@ def _render_alpha_chart(ottim_path: Path, fs: dict) -> None:
             y    = df_opt["n_selected"],
             mode = "lines+markers",
             name = "Features selected",
-            line = dict(color=pal["accent"], width=2.5),
-            marker= dict(size=7, color=pal["accent"],
-                         line=dict(width=1.5, color=pal["marker_edge"])),
+            line = dict(color="#00C9A7", width=2.5),
+            marker= dict(size=7, color="#00C9A7",
+                         line=dict(width=1.5, color="#0D1117")),
         ))
 
         # Cost line on secondary y-axis
@@ -1086,7 +917,7 @@ def _render_alpha_chart(ottim_path: Path, fs: dict) -> None:
             y    = df_opt["cost_value"],
             mode = "lines",
             name = "QUBO cost",
-            line = dict(color=pal["blue"], width=1.5, dash="dot"),
+            line = dict(color="#58A6FF", width=1.5, dash="dot"),
             yaxis= "y2",
             opacity=0.75,
         ))
@@ -1096,10 +927,10 @@ def _render_alpha_chart(ottim_path: Path, fs: dict) -> None:
             fig.add_hrect(
                 y0=max(0, target_k - allowance),
                 y1=target_k + allowance,
-                fillcolor=pal["band_fill"],
+                fillcolor="rgba(88,166,255,.12)",
                 line_width=0,
                 annotation_text=f"K ± {allowance}  ({target_k - allowance}–{target_k + allowance})",
-                annotation_font_color=pal["blue"],
+                annotation_font_color="#58A6FF",
                 annotation_position="right",
             )
 
@@ -1109,16 +940,16 @@ def _render_alpha_chart(ottim_path: Path, fs: dict) -> None:
                 x=best_alpha,
                 line_width=1.5,
                 line_dash="dash",
-                line_color=pal["accent"],
+                line_color="#00C9A7",
                 annotation_text=f"α* = {best_alpha:.4f}",
-                annotation_font_color=pal["accent"],
+                annotation_font_color="#00C9A7",
                 annotation_position="top left",
             )
 
         fig.update_layout(
-            template     = pal["template"],
-            paper_bgcolor= pal["paper_bg"],
-            plot_bgcolor = pal["plot_bg"],
+            template     = "plotly_dark",
+            paper_bgcolor= "rgba(0,0,0,0)",
+            plot_bgcolor = "rgba(13,17,23,.5)",
             xaxis_title  = "α  (weight of influence vs independence)",
             yaxis_title  = "Features selected",
             yaxis2       = dict(
@@ -1126,7 +957,7 @@ def _render_alpha_chart(ottim_path: Path, fs: dict) -> None:
                 overlaying = "y",
                 side       = "right",
                 showgrid   = False,
-                color      = pal["blue"],
+                color      = "#58A6FF",
             ),
             height       = 340,
             margin       = dict(l=10, r=10, t=24, b=10),
@@ -1134,19 +965,19 @@ def _render_alpha_chart(ottim_path: Path, fs: dict) -> None:
                 orientation="h", yanchor="bottom", y=1.02,
                 xanchor="right", x=1,
             ),
-            font         = dict(size=12, color=pal["text"]),
+            font         = dict(size=12, color="#8B949E"),
             xaxis        = dict(
-                gridcolor=pal["grid"], zerolinecolor=pal["grid"],
+                gridcolor="#30363D", zerolinecolor="#30363D",
             ),
             yaxis        = dict(
-                gridcolor=pal["grid"], zerolinecolor=pal["grid"],
+                gridcolor="#30363D", zerolinecolor="#30363D",
             ),
         )
 
         st.plotly_chart(fig, use_container_width=True)
         st.caption(
-            "The shaded band marks the acceptable feature count. "
-            "The dashed line shows the best α found by bisection search."
+            "The blue band marks the acceptable feature count. "
+            "The green dashed line shows the best α found by bisection search."
         )
 
     except ImportError:
@@ -1251,23 +1082,17 @@ def _tab_prediction() -> None:
 
 def main() -> None:
     _init_state()
-
-    # Detect Streamlit's actual rendered theme once per run, and use it
-    # for both the injected CSS and any Python-side rendering (e.g. the
-    # Plotly chart) — this is the single source of truth for "light vs
-    # dark", replacing the old @media (prefers-color-scheme) guesswork.
-    theme = _detect_theme_base()
-    st.markdown(_build_root_css(theme) + _CSS, unsafe_allow_html=True)
-
+    st.markdown(_CSS, unsafe_allow_html=True)
     _render_sidebar()
 
     # ── Main header ───────────────────────────────────────────────────────
     st.markdown(
         '<div style="margin-bottom:1.4rem;">'
-        '  <h1 class="page-title">'
+        '  <h1 style="font-size:1.55rem;font-weight:800;'
+        '              letter-spacing:-.03em;margin:0;color:#E6EDF3;">'
         '    QUBO Feature Selection &amp; Classification Pipeline'
         '  </h1>'
-        '  <p class="page-subtitle">'
+        '  <p style="color:#8B949E;font-size:.88rem;margin:.25rem 0 0;">'
         '    Binary credit-risk classification via QUBO-optimised feature reduction '
         '    and machine learning'
         '  </p>'

@@ -24,7 +24,6 @@ import time
 from pathlib import Path
 
 import pandas as pd
-from streamlit_theme import st_theme
 import streamlit as st
 
 # ── PATH SETUP ────────────────────────────────────────────────────────────────
@@ -60,122 +59,113 @@ st.set_page_config(
 # Theme:  deep-charcoal background · electric-teal accent
 # Signature element: pipeline status tracker with animated step badges
 # ═════════════════════════════════════════════════════════════════════════════
-# ═════════════════════════════════════════════════════════════════════════════
-# THEME DETECTION
-# ═════════════════════════════════════════════════════════════════════════════
-#
-# IMPORTANT: this app used to theme itself with @media (prefers-color-scheme),
-# which only reacts to the OS/browser preference. Streamlit has its OWN theme
-# switcher (☰ menu → Settings → Theme), independent of the OS setting, and
-# hosting environments often pin one explicitly. When the in-app theme and the
-# OS preference disagree, the media query fires for the wrong one — Streamlit
-# repaints the page background itself (light), while our custom CSS stayed on
-# its dark-mode default (light-on-light text). We ask Streamlit directly
-# instead, so the two can never disagree.
+_CSS = """
+<style>
 
-def _detect_theme_base() -> str:
-    """
-    Detect the active Streamlit theme ('light' or 'dark').
-    Uses `st_theme()` to force a rerun if the user changes the theme in the UI.
-    """
-    # st_theme() returns None on the very first microsecond of load, 
-    # then returns a dict containing the active theme config.
-    theme_info = st_theme()
-    
-    if theme_info is not None and "base" in theme_info:
-        return theme_info["base"]
-    
-    # Fallback for the initial load before JS responds
-    try:
-        if st.context.theme.type in ("light", "dark"):
-            return st.context.theme.type
-    except Exception:
-        pass
-        
-    return "dark"
+/* ═══════════════════════════════════════════════════════════════
+   THEME TOKENS
+   All colour decisions live here as CSS custom properties.
+   prefers-color-scheme lets the GUI adapt automatically to the
+   user's system preference — no forced dark backgrounds.
+   ═══════════════════════════════════════════════════════════════ */
 
+/* ── DARK MODE (default) ──────────────────────────────────────── */
+:root {
+    /* Accent — electric teal */
+    --accent:       #00C9A7;
+    --accent-glow:  rgba(0,201,167,.16);
+    --accent-edge:  rgba(0,201,167,.30);
 
-# ═════════════════════════════════════════════════════════════════════════════
-# DESIGN SYSTEM — injected as a single <style> block
-# Theme:  deep-charcoal / electric-teal (dark)  ·  off-white / forest-teal (light)
-# Signature element: pipeline status tracker with animated step badges
-# ═════════════════════════════════════════════════════════════════════════════
+    /* Surfaces — semi-transparent so they float above any bg */
+    --card-bg:      rgba(255,255,255,.045);
+    --card-border:  rgba(255,255,255,.09);
 
-# All colour decisions live here, keyed by the value _detect_theme_base()
-# returns. A matching :root block is generated at render time — deterministic,
-# and always in sync with whatever Streamlit is actually displaying.
-_THEME_TOKENS: dict = {
-    "dark": {
-        # Accent — electric teal
-        "accent":      "#00C9A7",
-        "accent-glow": "rgba(0,201,167,.16)",
-        "accent-edge": "rgba(0,201,167,.30)",
-        # Surfaces — semi-transparent so they float above any bg
-        "card-bg":     "rgba(255,255,255,.045)",
-        "card-border": "rgba(255,255,255,.09)",
-        # Typography
-        "text-primary": "#E6EDF3",
-        "text-muted":   "#8B949E",
-        # Tab bar
-        "tab-bar-bg": "rgba(255,255,255,.04)",
-        "tab-color":  "rgba(255,255,255,.48)",
-        # Status — ok / warning / info / error
-        "ok-clr": "#3FB950",   "ok-bg":   "rgba(63,185,80,.11)",
-        "warn-clr": "#F0883E", "warn-bg": "rgba(240,136,62,.09)", "warn-bd": "rgba(240,136,62,.28)",
-        "blue-clr": "#58A6FF", "info-bg": "rgba(88,166,255,.08)", "info-bd": "rgba(88,166,255,.22)",
-        "err-clr": "#FF6B6B",
-        # Pipeline step states
-        "ps-done-bg":       "rgba(63,185,80,.10)",
-        "ps-pending-clr":   "rgba(255,255,255,.38)",
-        "ps-pending-badge": "rgba(255,255,255,.10)",
-        # Text placed ON TOP of var(--accent) — bright teal → black reads best.
-        "accent-contrast": "#000",
-    },
-    "light": {
-        # Accent — teal shifted darker for contrast on white
-        "accent":      "#0A8A74",
-        "accent-glow": "rgba(10,138,116,.12)",
-        "accent-edge": "rgba(10,138,116,.25)",
-        # Surfaces — very subtle dark tint on white
-        "card-bg":     "rgba(0,0,0,.03)",
-        "card-border": "rgba(0,0,0,.10)",
-        # Typography
-        "text-primary": "#1F2328",
-        "text-muted":   "#656D76",
-        # Tab bar
-        "tab-bar-bg": "rgba(0,0,0,.04)",
-        "tab-color":  "rgba(0,0,0,.45)",
-        # Status — ok / warning / info / error
-        "ok-clr": "#1A7F37",   "ok-bg":   "rgba(26,127,55,.08)",
-        "warn-clr": "#9A6700", "warn-bg": "rgba(154,103,0,.07)", "warn-bd": "rgba(154,103,0,.25)",
-        "blue-clr": "#0969DA", "info-bg": "rgba(9,105,218,.07)", "info-bd": "rgba(9,105,218,.20)",
-        "err-clr": "#CF222E",
-        # Pipeline step states
-        "ps-done-bg":       "rgba(26,127,55,.08)",
-        "ps-pending-clr":   "rgba(0,0,0,.35)",
-        "ps-pending-badge": "rgba(0,0,0,.08)",
-        # Light-mode accent (#0A8A74) is a darkened teal, sized for
-        # text-on-white contrast — it is NOT light, so it needs a
-        # light label on top of it, not a dark one.
-        "accent-contrast": "#fff",
-    },
+    /* Typography */
+    --text-primary: #E6EDF3;
+    --text-muted:   #8B949E;
+
+    /* Tab bar */
+    --tab-bar-bg:   rgba(255,255,255,.04);
+    --tab-color:    rgba(255,255,255,.48);
+
+    /* Status — ok */
+    --ok-clr:       #3FB950;
+    --ok-bg:        rgba(63,185,80,.11);
+
+    /* Status — warning */
+    --warn-clr:     #F0883E;
+    --warn-bg:      rgba(240,136,62,.09);
+    --warn-bd:      rgba(240,136,62,.28);
+
+    /* Status — info */
+    --blue-clr:     #58A6FF;
+    --info-bg:      rgba(88,166,255,.08);
+    --info-bd:      rgba(88,166,255,.22);
+
+    /* Status — error */
+    --err-clr:      #FF6B6B;
+
+    /* Pipeline step states */
+    --ps-done-bg:         rgba(63,185,80,.10);
+    --ps-pending-clr:     rgba(255,255,255,.38);
+    --ps-pending-badge:   rgba(255,255,255,.10);
+
+    /* Text colour placed ON TOP of var(--accent).
+       Dark-mode accent (#00C9A7) is bright → black reads best. */
+    --accent-contrast: #000;
+
+    --radius: 10px;
+    --mono:   "JetBrains Mono","Fira Code",ui-monospace,monospace;
 }
 
+/* ── LIGHT MODE ───────────────────────────────────────────────── */
+@media (prefers-color-scheme: light) {
+    :root {
+        /* Teal shifted darker for contrast on white */
+        --accent:       #0A8A74;
+        --accent-glow:  rgba(10,138,116,.12);
+        --accent-edge:  rgba(10,138,116,.25);
 
-def _build_root_css(theme: str) -> str:
-    """Render the :root{...} custom-property block for the given theme."""
-    tokens = _THEME_TOKENS.get(theme, _THEME_TOKENS["dark"])
-    declarations = "\n    ".join(f"--{name}: {value};" for name, value in tokens.items())
-    return (
-        "<style>\n:root {\n    "
-        + declarations
-        + "\n    --radius: 10px;"
-          '\n    --mono:   "JetBrains Mono","Fira Code",ui-monospace,monospace;'
-          "\n}\n"
-    )
+        /* Surfaces — very subtle dark tint on white */
+        --card-bg:      rgba(0,0,0,.03);
+        --card-border:  rgba(0,0,0,.10);
 
+        /* Typography */
+        --text-primary: #1F2328;
+        --text-muted:   #656D76;
 
-_CSS = """
+        /* Tab bar */
+        --tab-bar-bg:   rgba(0,0,0,.04);
+        --tab-color:    rgba(0,0,0,.45);
+
+        /* Status — ok */
+        --ok-clr:       #1A7F37;
+        --ok-bg:        rgba(26,127,55,.08);
+
+        /* Status — warning */
+        --warn-clr:     #9A6700;
+        --warn-bg:      rgba(154,103,0,.07);
+        --warn-bd:      rgba(154,103,0,.25);
+
+        /* Status — info */
+        --blue-clr:     #0969DA;
+        --info-bg:      rgba(9,105,218,.07);
+        --info-bd:      rgba(9,105,218,.20);
+
+        /* Status — error */
+        --err-clr:      #CF222E;
+
+        /* Pipeline step states */
+        --ps-done-bg:         rgba(26,127,55,.08);
+        --ps-pending-clr:     rgba(0,0,0,.35);
+        --ps-pending-badge:   rgba(0,0,0,.08);
+
+        /* Light-mode accent (#0A8A74) is a darkened teal, sized for
+           text-on-white contrast — it is NOT light, so it needs a
+           light label on top of it, not a dark one. */
+        --accent-contrast: #fff;
+    }
+}
 
 /* ── GLOBAL ─────────────────────────────────────────────────────── */
 .main .block-container {
@@ -413,12 +403,6 @@ _STATE_DEFAULTS: dict = {
     # Phase 4 — Prediction  (populated in Part 2)
     "prediction_done":  False,
     "prediction_stats": None,
-
-    # Internal bookkeeping — NOT a pipeline phase. Tracks the (name, size)
-    # signature of the last UploadedFile we actually processed, so we can
-    # tell "still the same upload, just another rerun" apart from "the user
-    # picked a new/different file". See _render_sidebar().
-    "uploaded_signature": None,
 }
 
 
@@ -561,22 +545,7 @@ def _render_sidebar() -> None:
         )
 
         if uploaded is not None:
-            # `st.file_uploader` returns the SAME UploadedFile object on
-            # EVERY rerun for as long as it stays attached to the widget —
-            # not only on the run where the user picked it. If we called
-            # _handle_upload() unconditionally here, it would fire again on
-            # every single rerun the app performs afterwards — including
-            # the reruns _run_preprocessing()/_run_feature_selection() now
-            # trigger on success — and _handle_upload() resets every
-            # downstream phase flag to False. That is precisely what caused
-            # Phase 2 to "complete in the backend, then reset in the UI".
-            #
-            # Fix: only treat it as a genuinely NEW upload if its (name,
-            # size) signature differs from the last one we processed.
-            signature = (uploaded.name, uploaded.size)
-            if signature != st.session_state.uploaded_signature:
-                _handle_upload(uploaded)
-                st.session_state.uploaded_signature = signature
+            _handle_upload(uploaded)
 
         # Dataset info chips
         if st.session_state.dataset_path and st.session_state.dataset_preview is not None:
@@ -767,20 +736,10 @@ def _run_preprocessing(target_column: str, min_perc_valid: float) -> None:
 
         except FileNotFoundError as exc:
             st.error(f"**File not found:** {exc}")
-            return
         except ValueError as exc:
             st.error(f"**Validation error:** {exc}")
-            return
         except Exception as exc:
             st.error(f"**Unexpected error:** {exc}")
-            return
-
-    # Success: force an immediate rerun so every widget that reads
-    # `preprocessing_done` — most importantly the sidebar pipeline
-    # tracker, which was already drawn before this function ran — picks
-    # up the new state right away instead of waiting for the next
-    # user-triggered interaction.
-    st.rerun()
 
 
 def _render_preprocessing_results(stats: dict) -> None:
@@ -962,21 +921,12 @@ def _run_feature_selection(
     except FileNotFoundError as exc:
         progress.empty()
         st.error(f"**File not found:** {exc}")
-        return
     except ValueError as exc:
         progress.empty()
         st.error(f"**Validation error:** {exc}")
-        return
     except Exception as exc:
         progress.empty()
         st.error(f"**Unexpected error during QUBO optimisation:** {exc}")
-        return
-
-    # Success: same reasoning as _run_preprocessing() — sync the sidebar
-    # (and everything else reading session_state) immediately, rather
-    # than leaving Phase 3 / Phase 4 gates and the pipeline tracker
-    # showing stale info until another widget interaction forces a redraw.
-    st.rerun()
 
 
 def _render_feature_selection_results(fs: dict) -> None:
@@ -1023,8 +973,27 @@ def _render_feature_selection_results(fs: dict) -> None:
         st.json(fs)
 
 
-# NOTE: _detect_theme_base() is defined once, near the top of the file,
-# and reused both for CSS injection (main()) and for this chart's palette.
+def _detect_theme_base() -> str:
+    """Best-effort detection of the active Streamlit theme ('light' or 'dark').
+
+    Tries the modern `st.context.theme` API first (reflects the resolved
+    theme even when the user has "Use system setting" selected), then
+    falls back to the static `theme.base` config option, then to 'dark'
+    (the original design's default) if neither is available.
+    """
+    try:
+        theme_type = st.context.theme.type  # Streamlit ≥ 1.36
+        if theme_type in ("light", "dark"):
+            return theme_type
+    except Exception:
+        pass
+    try:
+        base = st.get_option("theme.base")
+        if base in ("light", "dark"):
+            return base
+    except Exception:
+        pass
+    return "dark"
 
 
 # Chart palettes mirror the CSS tokens in _CSS exactly, so the Plotly
@@ -1251,14 +1220,7 @@ def _tab_prediction() -> None:
 
 def main() -> None:
     _init_state()
-
-    # Detect Streamlit's actual rendered theme once per run, and use it
-    # for both the injected CSS and any Python-side rendering (e.g. the
-    # Plotly chart) — this is the single source of truth for "light vs
-    # dark", replacing the old @media (prefers-color-scheme) guesswork.
-    theme = _detect_theme_base()
-    st.markdown(_build_root_css(theme) + _CSS, unsafe_allow_html=True)
-
+    st.markdown(_CSS, unsafe_allow_html=True)
     _render_sidebar()
 
     # ── Main header ───────────────────────────────────────────────────────

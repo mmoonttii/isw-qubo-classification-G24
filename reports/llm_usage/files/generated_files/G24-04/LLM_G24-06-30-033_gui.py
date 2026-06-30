@@ -24,7 +24,6 @@ import time
 from pathlib import Path
 
 import pandas as pd
-from streamlit_theme import st_theme
 import streamlit as st
 
 # ── PATH SETUP ────────────────────────────────────────────────────────────────
@@ -74,24 +73,19 @@ st.set_page_config(
 # instead, so the two can never disagree.
 
 def _detect_theme_base() -> str:
-    """
-    Detect the active Streamlit theme ('light' or 'dark').
-    Uses `st_theme()` to force a rerun if the user changes the theme in the UI.
-    """
-    # st_theme() returns None on the very first microsecond of load, 
-    # then returns a dict containing the active theme config.
-    theme_info = st_theme()
-    
-    if theme_info is not None and "base" in theme_info:
-        return theme_info["base"]
-    
-    # Fallback for the initial load before JS responds
+    """Best-effort detection of the active Streamlit theme ('light' or 'dark')."""
     try:
-        if st.context.theme.type in ("light", "dark"):
-            return st.context.theme.type
+        theme_type = st.context.theme.type  # Streamlit ≥ 1.36, resolves "auto" too
+        if theme_type in ("light", "dark"):
+            return theme_type
     except Exception:
         pass
-        
+    try:
+        base = st.get_option("theme.base")
+        if base in ("light", "dark"):
+            return base
+    except Exception:
+        pass
     return "dark"
 
 
@@ -413,12 +407,6 @@ _STATE_DEFAULTS: dict = {
     # Phase 4 — Prediction  (populated in Part 2)
     "prediction_done":  False,
     "prediction_stats": None,
-
-    # Internal bookkeeping — NOT a pipeline phase. Tracks the (name, size)
-    # signature of the last UploadedFile we actually processed, so we can
-    # tell "still the same upload, just another rerun" apart from "the user
-    # picked a new/different file". See _render_sidebar().
-    "uploaded_signature": None,
 }
 
 
@@ -561,22 +549,7 @@ def _render_sidebar() -> None:
         )
 
         if uploaded is not None:
-            # `st.file_uploader` returns the SAME UploadedFile object on
-            # EVERY rerun for as long as it stays attached to the widget —
-            # not only on the run where the user picked it. If we called
-            # _handle_upload() unconditionally here, it would fire again on
-            # every single rerun the app performs afterwards — including
-            # the reruns _run_preprocessing()/_run_feature_selection() now
-            # trigger on success — and _handle_upload() resets every
-            # downstream phase flag to False. That is precisely what caused
-            # Phase 2 to "complete in the backend, then reset in the UI".
-            #
-            # Fix: only treat it as a genuinely NEW upload if its (name,
-            # size) signature differs from the last one we processed.
-            signature = (uploaded.name, uploaded.size)
-            if signature != st.session_state.uploaded_signature:
-                _handle_upload(uploaded)
-                st.session_state.uploaded_signature = signature
+            _handle_upload(uploaded)
 
         # Dataset info chips
         if st.session_state.dataset_path and st.session_state.dataset_preview is not None:
@@ -767,20 +740,10 @@ def _run_preprocessing(target_column: str, min_perc_valid: float) -> None:
 
         except FileNotFoundError as exc:
             st.error(f"**File not found:** {exc}")
-            return
         except ValueError as exc:
             st.error(f"**Validation error:** {exc}")
-            return
         except Exception as exc:
             st.error(f"**Unexpected error:** {exc}")
-            return
-
-    # Success: force an immediate rerun so every widget that reads
-    # `preprocessing_done` — most importantly the sidebar pipeline
-    # tracker, which was already drawn before this function ran — picks
-    # up the new state right away instead of waiting for the next
-    # user-triggered interaction.
-    st.rerun()
 
 
 def _render_preprocessing_results(stats: dict) -> None:
@@ -962,21 +925,12 @@ def _run_feature_selection(
     except FileNotFoundError as exc:
         progress.empty()
         st.error(f"**File not found:** {exc}")
-        return
     except ValueError as exc:
         progress.empty()
         st.error(f"**Validation error:** {exc}")
-        return
     except Exception as exc:
         progress.empty()
         st.error(f"**Unexpected error during QUBO optimisation:** {exc}")
-        return
-
-    # Success: same reasoning as _run_preprocessing() — sync the sidebar
-    # (and everything else reading session_state) immediately, rather
-    # than leaving Phase 3 / Phase 4 gates and the pipeline tracker
-    # showing stale info until another widget interaction forces a redraw.
-    st.rerun()
 
 
 def _render_feature_selection_results(fs: dict) -> None:

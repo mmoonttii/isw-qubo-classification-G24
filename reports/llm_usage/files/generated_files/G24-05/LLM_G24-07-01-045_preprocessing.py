@@ -230,17 +230,8 @@ def fit_normalize(
     """
     input_path = _resolve_input_path(input_csv)
 
-    # normalized_csv / outInitalRes_json are used exactly as given (per
-    # §11.1): callers — the CLI block below, gui.py, or the evaluator's
-    # own tests — are responsible for resolving bare filenames into
-    # outputs/ themselves *before* calling fit_normalize(), via
-    # _to_output_path(). Silently rewriting them here would break any
-    # caller that passes its own explicit path (e.g. a tmp_path in a
-    # test, or the evaluator's own output directory).
-    out_csv_path = Path(normalized_csv)
-    out_json_path = Path(outInitalRes_json)
-    out_csv_path.parent.mkdir(parents=True, exist_ok=True)
-    out_json_path.parent.mkdir(parents=True, exist_ok=True)
+    out_csv_path = _to_output_path(normalized_csv)
+    out_json_path = _to_output_path(outInitalRes_json)
 
     logger.info("Input  : %s", input_path.resolve())
     logger.info("Output CSV  : %s", out_csv_path)
@@ -545,20 +536,12 @@ def main(argv: Optional[list[str]] = None) -> None:
     if not (0.0 <= args.min_perc_valid <= 1.0):
         parser.error("--min-perc-valid must be between 0.0 and 1.0")
 
-    # Resolve bare filenames into outputs/ here, at the CLI boundary —
-    # fit_normalize() itself now honors whatever path it's given
-    # literally (see the comment above _to_output_path's call site
-    # inside the function), so the CLI is responsible for the
-    # bare-filename convenience shown in the spec's §12 examples.
-    out_data_path = _to_output_path(args.out_data)
-    out_json_path = _to_output_path(args.out_json)
-
     try:
         stats = fit_normalize(
             input_csv=args.input,
             target_column=args.target,
-            normalized_csv=str(out_data_path),
-            outInitalRes_json=str(out_json_path),
+            normalized_csv=args.out_data,
+            outInitalRes_json=args.out_json,
             minPercValid=args.min_perc_valid,
         )
     except (FileNotFoundError, ValueError) as exc:
@@ -566,7 +549,9 @@ def main(argv: Optional[list[str]] = None) -> None:
         sys.exit(1)
 
     # Echo the output paths to stdout (mirrors the spec "Output atteso")
-    print(str(out_data_path))
+    out_csv_path = _to_output_path(args.out_data)
+    out_json_path = _to_output_path(args.out_json)
+    print(str(out_csv_path))
     print(str(out_json_path))
 
     # Human-readable summary

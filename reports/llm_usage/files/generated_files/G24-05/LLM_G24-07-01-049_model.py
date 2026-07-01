@@ -79,18 +79,19 @@ from sklearn.metrics import (
 # Output path helpers
 # ---------------------------------------------------------------------------
 #
-# IMPORTANT: _to_output_path() is applied at each *call site* that wants
-# "bare filename -> outputs/" convenience — the CLI dispatch block below,
-# and gui.py's own call sites — NOT inside train()/predict() themselves.
-# Per §11.3, train()/predict() must honor model_path/metrics_json/
-# predictions_csv/classif_stats_json exactly as given by the caller
-# (e.g. the evaluator passing its own absolute paths); silently
-# rewriting them to <repo>/outputs/<basename> inside the functions
-# breaks that contract for any caller that isn't going through the CLI
-# or gui.py's bare-filename convention.
+# IMPORTANT: these are used by train()/predict() themselves (not just the
+# CLI), so that callers — including gui.py, which imports and calls these
+# functions directly as a library rather than going through the CLI — always
+# get their output files written into the project's outputs/ directory,
+# regardless of the process's current working directory.
 #
 # This mirrors the identical helpers in preprocessing.py and
-# feature_selection.py.
+# feature_selection.py. Without this, a bare filename like "model.joblib"
+# resolves relative to os.getcwd() (wherever the GUI happened to be
+# launched from) instead of <repo_root>/outputs/, which can silently leave
+# a stale outputs/model.joblib in place from an earlier run while
+# session_state.model_path keeps pointing at it — leading to predictions
+# being run against the wrong (stale) model.
 
 def _resolve_outputs_dir() -> Path:
     """Return the absolute path to the ``outputs/`` directory.
@@ -330,13 +331,13 @@ def train(
     # ------------------------------------------------------------------
     # 4. Save the trained model
     # ------------------------------------------------------------------
-    # model_path / metrics_json are used exactly as given (per §11.3):
-    # callers — the CLI block, gui.py, or the evaluator's own tests —
-    # are responsible for resolving bare filenames into outputs/
-    # themselves *before* calling train(), via _to_output_path(). The
-    # CLI block below and gui.py's call sites already do this.
-    model_path = Path(model_path)
-    metrics_json = Path(metrics_json)
+    # Resolve into outputs/ here (not just in the CLI block) so that
+    # library callers such as gui.py — which pass bare filenames like
+    # "model.joblib" — don't silently write next to the process's cwd
+    # while everything else (session_state, predict()) keeps assuming
+    # the file lives under outputs/.
+    model_path = _to_output_path(model_path)
+    metrics_json = _to_output_path(metrics_json)
 
     Path(model_path).parent.mkdir(parents=True, exist_ok=True)
     joblib.dump(model, model_path)
@@ -418,11 +419,8 @@ def predict(
     # ------------------------------------------------------------------
     # 1. Resolve output paths and load the trained model once
     # ------------------------------------------------------------------
-    # predictions_csv / classif_stats_json are used exactly as given
-    # (per §11.3) — same reasoning as train()'s model_path/metrics_json
-    # above. Bare-filename convenience is the caller's responsibility.
-    predictions_csv = Path(predictions_csv)
-    classif_stats_json = Path(classif_stats_json)
+    predictions_csv = _to_output_path(predictions_csv)
+    classif_stats_json = _to_output_path(classif_stats_json)
     Path(predictions_csv).parent.mkdir(parents=True, exist_ok=True)
     Path(classif_stats_json).parent.mkdir(parents=True, exist_ok=True)
 

@@ -412,27 +412,21 @@ def select_features(
     )
 
     # ── SAVE reducedTrain_csv ──────────────────────────────────────────────────
-    # Output params are honored exactly as given (per §11.2) — see the
-    # comment above _to_output_path()'s definition for why this must not
-    # be rerouted inside the function itself.
-    out_train_path = Path(reducedTrain_csv)
-    out_train_path.parent.mkdir(parents=True, exist_ok=True)
+    out_train_path = _to_output_path(reducedTrain_csv)
     df_train[selected_feature_names + [target_column]].to_csv(
         out_train_path, index=False
     )
     print(f"[{datetime.now():%H:%M:%S}] Saved training set → {out_train_path}")
 
     # ── SAVE reducedTest_csv ───────────────────────────────────────────────────
-    out_test_path = Path(reducedTest_csv)
-    out_test_path.parent.mkdir(parents=True, exist_ok=True)
+    out_test_path = _to_output_path(reducedTest_csv)
     df_test[selected_feature_names + [target_column]].to_csv(
         out_test_path, index=False
     )
     print(f"[{datetime.now():%H:%M:%S}] Saved test set     → {out_test_path}")
 
     # ── SAVE output_ottim_csv (sorted by alpha ascending) ─────────────────────
-    out_ottim_path = Path(output_ottim_csv)
-    out_ottim_path.parent.mkdir(parents=True, exist_ok=True)
+    out_ottim_path = _to_output_path(output_ottim_csv)
     (
         pd.DataFrame(tried, columns=["alpha", "optimization_time", "n_selected", "cost_value"])
         .sort_values("alpha")
@@ -441,8 +435,7 @@ def select_features(
     print(f"[{datetime.now():%H:%M:%S}] Saved optimizations log → {out_ottim_path}")
 
     # ── SAVE output_json ───────────────────────────────────────────────────────
-    out_json_path = Path(output_json)
-    out_json_path.parent.mkdir(parents=True, exist_ok=True)
+    out_json_path = _to_output_path(output_json)
     summary = {
         "n_features":                n,
         "target_ratio":              percSelected,
@@ -492,21 +485,12 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
-    # Resolve bare filenames into outputs/ here, at the CLI boundary —
-    # select_features() itself now honors whatever paths it's given
-    # literally, so the CLI is responsible for the bare-filename
-    # convenience shown in the spec's §12 examples.
-    out_train_path = _to_output_path(args.out_train)
-    out_test_path = _to_output_path(args.out_test)
-    out_optim_path = _to_output_path(args.out_optimizations)
-    out_json_path = _to_output_path(args.out_json)
-
     select_features(
         normalized_csv    = args.in_normalized,
-        reducedTrain_csv  = str(out_train_path),
-        reducedTest_csv   = str(out_test_path),
-        output_ottim_csv  = str(out_optim_path),
-        output_json       = str(out_json_path),
+        reducedTrain_csv  = args.out_train,
+        reducedTest_csv   = args.out_test,
+        output_ottim_csv  = args.out_optimizations,
+        output_json       = args.out_json,
         target_column     = args.target,
         percTest          = args.perc_test,
         percSelected      = args.perc_selected,
@@ -516,7 +500,7 @@ if __name__ == "__main__":
     )
 
     # Print the four output paths in the required order
-    print(out_train_path)
-    print(out_test_path)
-    print(out_optim_path)
-    print(out_json_path)
+    print(_to_output_path(args.out_train))
+    print(_to_output_path(args.out_test))
+    print(_to_output_path(args.out_optimizations))
+    print(_to_output_path(args.out_json))

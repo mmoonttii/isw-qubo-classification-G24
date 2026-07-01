@@ -205,35 +205,37 @@ def preproc(raw_csv) -> dict[str, str]:
 
     Path contract
     -------------
-    fit_normalize() routes every output parameter through its internal
-    ``_to_output_path()`` helper, which calls ``Path(user_path).name`` and
-    then prepends the project's ``outputs/`` directory.  Passing a full
-    ``tmp_path`` absolute path would therefore be silently reduced to just
-    the basename and written somewhere we cannot predict from the fixture.
+    fit_normalize() honors ``normalized_csv``/``outInitalRes_json`` exactly
+    as given (per §11.1) — it no longer reroutes them into ``outputs/``
+    internally. This fixture is therefore responsible for constructing
+    the full destination path itself, the same way the CLI and gui.py do
+    at their own call sites.
 
-    Fix: pass bare filenames prefixed with ``_TEST_PREFIX`` so the
-    resulting path is deterministic and does not collide with production
-    output files.  Compute the actual destination via ``_project_outputs_dir()``
-    so the returned dict always points to the file that was really written.
+    Filenames are prefixed with ``_TEST_PREFIX`` so they don't collide
+    with production output files, and both live directly under the
+    project's ``outputs/`` directory for consistency with the rest of the
+    pipeline (not strictly required anymore, since any path would now be
+    honored literally, but keeping this convention avoids scattering test
+    artifacts elsewhere).
 
     Returns
     -------
     dict with keys ``csv`` and ``json``.
     """
     out_dir       = _project_outputs_dir()
-    norm_csv_name = _TEST_PREFIX + "normalized.csv"
-    out_json_name = _TEST_PREFIX + "preprocessing_stats.json"
+    norm_csv_path = out_dir / (_TEST_PREFIX + "normalized.csv")
+    out_json_path = out_dir / (_TEST_PREFIX + "preprocessing_stats.json")
 
     fit_normalize(
         input_csv         = str(raw_csv),
         target_column     = TARGET,
-        normalized_csv    = norm_csv_name,   # bare filename — _to_output_path keeps only .name
-        outInitalRes_json = out_json_name,   # same rule; see §11.1 for the typo in param name
+        normalized_csv    = str(norm_csv_path),   # full path — honored literally
+        outInitalRes_json = str(out_json_path),   # same; see §11.1 for the typo in param name
         minPercValid      = 0.05,
     )
     return {
-        "csv":  str(out_dir / norm_csv_name),
-        "json": str(out_dir / out_json_name),
+        "csv":  str(norm_csv_path),
+        "json": str(out_json_path),
     }
 
 
@@ -245,36 +247,27 @@ def feat_sel(preproc) -> dict[str, str]:
 
     Path contract
     -------------
-    select_features() applies the same ``_to_output_path()`` logic as
-    fit_normalize() to every *output* parameter, stripping directory
-    components and always writing into ``outputs/``.
-
-    However, the *input* parameter ``normalized_csv`` is read directly with
-    ``pd.read_csv()`` — no remapping occurs.  We therefore:
-
-    • Pass the full resolved path from ``preproc["csv"]`` as the input so
-      select_features() can find the file that fit_normalize() wrote.
-    • Pass bare filenames (prefixed with ``_TEST_PREFIX``) for all four
-      output parameters so the writes land at predictable locations.
-    • Return paths built from ``_project_outputs_dir()`` so the dict always
-      reflects where the files were actually written.
+    select_features() honors every output parameter exactly as given
+    (per §11.2) — it no longer reroutes them into ``outputs/`` internally,
+    matching fit_normalize()'s contract above. This fixture builds the
+    full destination paths itself.
 
     Returns
     -------
     dict with keys ``train_csv``, ``test_csv``, ``optim_csv``, ``json``.
     """
-    out_dir    = _project_outputs_dir()
-    train_name = _TEST_PREFIX + "train_reduced.csv"
-    test_name  = _TEST_PREFIX + "test_reduced.csv"
-    optim_name = _TEST_PREFIX + "optimizations.csv"
-    json_name  = _TEST_PREFIX + "feature_selection_stats.json"
+    out_dir         = _project_outputs_dir()
+    train_csv_path  = out_dir / (_TEST_PREFIX + "train_reduced.csv")
+    test_csv_path   = out_dir / (_TEST_PREFIX + "test_reduced.csv")
+    optim_csv_path  = out_dir / (_TEST_PREFIX + "optimizations.csv")
+    json_path       = out_dir / (_TEST_PREFIX + "feature_selection_stats.json")
 
     select_features(
-        normalized_csv    = preproc["csv"],   # full path — inputs are NOT remapped
-        reducedTrain_csv  = train_name,        # bare filename — output is remapped
-        reducedTest_csv   = test_name,
-        output_ottim_csv  = optim_name,
-        output_json       = json_name,
+        normalized_csv    = preproc["csv"],        # full path
+        reducedTrain_csv  = str(train_csv_path),   # full path — honored literally
+        reducedTest_csv   = str(test_csv_path),
+        output_ottim_csv  = str(optim_csv_path),
+        output_json       = str(json_path),
         target_column     = TARGET,
         percTest          = 0.30,
         percSelected      = 0.20,
@@ -283,10 +276,10 @@ def feat_sel(preproc) -> dict[str, str]:
         alpha_computations = 20,   # limited for speed; still exercises the alpha search loop
     )
     return {
-        "train_csv": str(out_dir / train_name),
-        "test_csv":  str(out_dir / test_name),
-        "optim_csv": str(out_dir / optim_name),
-        "json":      str(out_dir / json_name),
+        "train_csv": str(train_csv_path),
+        "test_csv":  str(test_csv_path),
+        "optim_csv": str(optim_csv_path),
+        "json":      str(json_path),
     }
 
 

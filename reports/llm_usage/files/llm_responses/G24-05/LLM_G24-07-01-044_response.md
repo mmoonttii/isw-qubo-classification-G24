@@ -1,0 +1,21 @@
+Good catch on your part, but let me verify each claim against the actual code before we fix anything — one of the three is slightly off.Here's what I found after checking each file against §12 line by line:
+
+**`preprocessing.py` — your claim is off.** The spec doesn't actually require it to look in `data/`. `--input` is the *first* file in the pipeline, supplied directly by the user (or evaluator), so it's correct that it just reads whatever path is given (`Path(input_csv)`, no forcing). It already does the right thing: outputs are forced into `outputs/` via `_to_output_path`, inputs stay as given.
+
+**`feature_selection.py` and `model.py` — you're right, and it's a real bug.** Both correctly force their *outputs* into `outputs/` via `_to_output_path`. But their *inputs* — the very files the previous stage just wrote there — are read with the raw string the user typed, with no resolution against `outputs/`:
+
+- `feature_selection.py`: `pd.read_csv(normalized_csv, ...)` — reads `--in-normalized` literally
+- `model.py train()`: `pd.read_csv(reducedTrain_csv)` — reads `--in-reduced` literally
+- `model.py predict()`: `pd.read_csv(reduced_Test_csv)` — reads `--input-testset` literally
+
+So if you run the exact commands from §12 back-to-back from the repo root (`--in-normalized normalized.csv`, `--in-reduced training_reduced.csv`, etc.), they'll fail with `FileNotFoundError` unless your cwd happens to be `outputs/` — because those files actually live at `outputs/normalized.csv`, `outputs/training_reduced.csv`. (`model_path` in `model.py` is the one input that *does* get resolved correctly, via `_to_output_path`, so `predict` loading the model works — it's only the CSVs that are broken.)
+
+There's also a smaller wart in `feature_selection.py`'s CLI block: it resolves `args.out_train` etc. via `_to_output_path` *before* passing them into `select_features()`, which resolves them again internally. Harmless (idempotent) but redundant.
+
+I'll add a symmetric `_resolve_input_path()` helper — tries the path as given first, falls back to `outputs/<basename>` — and use it wherever a file is expected to have been produced by a previous pipeline stage.Now use it where the normalized CSV is actually read:Now clean up the redundant double-resolution in the CLI dispatch:Now the same fix for `model.py`:Now simplify the CLI dispatch so it doesn't pre-resolve the input paths (that job now lives inside `train()`/`predict()`):Let's sanity-check both files compile and quickly simulate the actual pipeline order the spec's §12 examples imply:Good — confirms `normalized.csv` lands in `outputs/`. Now the step that was broken — feature selection with a bare filename, run from repo root:It correctly found `outputs/normalized.csv` from the bare `--in-normalized normalized.csv` — this would have thrown `FileNotFoundError` before the fix. Now `model.py`:All four §12 commands now run end-to-end from the repo root with the exact bare-filename form the spec gives — which used to fail with `FileNotFoundError` on `feature_selection.py` and both `model.py` subcommands. Copying the fixed files over:Summary of the diagnosis and fix:
+
+- **`preprocessing.py`**: nothing to fix — `--input` is a user-supplied entry point, not chained from a prior stage, so it's correct as-is.
+- **`feature_selection.py`**: `select_features()` was reading `--in-normalized` literally instead of looking in `outputs/`. Added a `_resolve_input_path()` helper (tries the path as given, then falls back to `outputs/<basename>`) and used it when loading the normalized CSV. Also removed a redundant double-resolution of the output paths in the CLI block.
+- **`model.py`**: same fix applied to `--in-reduced` (train) and `--input-testset` + `--model` (predict) — all now resolve against `outputs/` if not found as given.
+
+I verified it by running all four commands from §12 verbatim, from the repo root, with bare filenames — the full pipeline (preprocess → feature-select → train → predict) now runs without touching any absolute paths, which was failing before.

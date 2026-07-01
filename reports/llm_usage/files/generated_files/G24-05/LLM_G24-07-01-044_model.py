@@ -5,62 +5,12 @@ Supported classifiers:
     - "random_forest"       : RandomForestClassifier
     - "logistic_regression" : LogisticRegression
     - "gradient_boosting"   : GradientBoostingClassifier
-
-Scalability for large row counts (1.5M+ samples)
-──────────────────────────────────────────────────
-1. Dtype-typed reads: both train() and predict() read the (already
-   feature-reduced) CSV with an explicit float32/int8 dtype map instead of
-   pandas' float64/int64 defaults — halves the feature matrix' memory
-   footprint. This also matters for RandomForest/GradientBoosting: sklearn's
-   tree code casts X to float32 internally regardless (its DTYPE constant),
-   so handing it float64 costs an extra full-size internal copy/cast that
-   float32 input avoids.
-2. train(): uses df.pop(target_column) instead of
-   X = df.drop(columns=[target_column]); y = df[target_column]. The old
-   drop() allocates a brand-new DataFrame holding every column except the
-   target, so the original df and the new X frame are briefly both alive —
-   effectively a full second copy of the feature matrix. pop() removes the
-   target column from df in place and returns it, so df itself becomes X
-   with no extra copy. Combined with the float32 read (point 1), measured
-   on a synthetic 1.05M-row x 29-feature reduced training set (a realistic
-   post-selection size and row count for a 1.5M-row source dataset): peak
-   RSS 547 MB -> 312 MB.
-3. predict(): the previous version loaded the whole test set, ran
-   model.predict()/predict_proba() on it in one call, then built the whole
-   predictions_df before writing it out — three full-size structures alive
-   at once, without any diagnostic-time reason to be scale-blind here (the
-   test set is what the docente's 1.5M+ row verification set actually
-   exercises). Rewritten to stream: read in chunks, predict per chunk,
-   write predictions.csv incrementally (mirrors preprocessing.py's
-   chunked-write pattern). The (target, prediction, score) values needed
-   for the final aggregate metrics (accuracy, per-class precision/recall/
-   F1, ROC-AUC, confusion matrix) are tiny even at 1.5M rows — three
-   arrays of a few MB each — so they're kept in memory across chunks and
-   the stats are computed once at the end, identical to the non-chunked
-   result (chunking a row-independent prediction changes nothing about
-   the predictions themselves).
-
-Not changed here, flagged for a decision instead
-──────────────────────────────────────────────────
-GradientBoostingClassifier builds trees sequentially and has no n_jobs —
-it does not parallelize and is known to scale poorly past ~100k-1M rows
-compared to RandomForest (n_jobs=-1) or a histogram-based booster. Swapping
-it for sklearn's HistGradientBoostingClassifier would very likely be
-dramatically faster at 1M+ rows, but it is a different algorithm with
-different hyperparameters and (usually) different accuracy characteristics
-— since classification quality feeds into this project's grading, that
-trade-off is left as a choice for the group rather than changed silently.
-Similarly, RandomForest/GradientBoosting here use unbounded tree depth,
-which can make both training time and the saved model size grow
-substantially with row count; bounding it (e.g. max_depth, min_samples_leaf)
-is a tuning decision with the same accuracy trade-off and is left alone.
 """
 
 import json
 import time
 import argparse
 from pathlib import Path
-from typing import Optional
 
 import numpy as np
 import pandas as pd
@@ -79,18 +29,19 @@ from sklearn.metrics import (
 # Output path helpers
 # ---------------------------------------------------------------------------
 #
-# IMPORTANT: _to_output_path() is applied at each *call site* that wants
-# "bare filename -> outputs/" convenience — the CLI dispatch block below,
-# and gui.py's own call sites — NOT inside train()/predict() themselves.
-# Per §11.3, train()/predict() must honor model_path/metrics_json/
-# predictions_csv/classif_stats_json exactly as given by the caller
-# (e.g. the evaluator passing its own absolute paths); silently
-# rewriting them to <repo>/outputs/<basename> inside the functions
-# breaks that contract for any caller that isn't going through the CLI
-# or gui.py's bare-filename convention.
+# IMPORTANT: these are used by train()/predict() themselves (not just the
+# CLI), so that callers — including gui.py, which imports and calls these
+# functions directly as a library rather than going through the CLI — always
+# get their output files written into the project's outputs/ directory,
+# regardless of the process's current working directory.
 #
 # This mirrors the identical helpers in preprocessing.py and
-# feature_selection.py.
+# feature_selection.py. Without this, a bare filename like "model.joblib"
+# resolves relative to os.getcwd() (wherever the GUI happened to be
+# launched from) instead of <repo_root>/outputs/, which can silently leave
+# a stale outputs/model.joblib in place from an earlier run while
+# session_state.model_path keeps pointing at it — leading to predictions
+# being run against the wrong (stale) model.
 
 def _resolve_outputs_dir() -> Path:
     """Return the absolute path to the ``outputs/`` directory.
@@ -131,20 +82,15 @@ def _to_output_path(user_path: str) -> Path:
 def _resolve_input_path(user_path: str) -> Path:
     """Resolve *user_path* to an existing file for reading.
 
-    Per §12, the inputs to this module (``--in-reduced`` for train(),
-    ``--input-testset`` and ``--model`` for predict()) are files that
-    feature_selection.py or this module's own train() already wrote into
-    ``outputs/``. Mirrors the identical helper in preprocessing.py and
-    feature_selection.py so the exact bare-filename CLI invocations shown
-    in the spec (e.g. ``--in-reduced training_reduced.csv``) work
-    regardless of the caller's current working directory, instead of
-    requiring ``outputs/training_reduced.csv`` to be spelled out. Tries,
-    in order:
+    Per §12, the CSV inputs to this module (``--in-reduced`` for train,
+    ``--input-testset`` for predict) are files that feature_selection.py
+    just wrote into ``outputs/``. To make the exact CLI invocations in
+    the spec work regardless of the caller's current working directory,
+    this tries, in order:
 
-    1. *user_path* exactly as given (absolute, or relative to cwd) — so a
-       caller who does pass a full/relative path is still honoured.
-    2. ``outputs/<basename of user_path>`` — where a prior pipeline stage
-       (or this module's own _to_output_path) would have written it.
+    1. *user_path* exactly as given (absolute, or relative to cwd).
+    2. ``outputs/<basename of user_path>`` — matching where the prior
+       pipeline stage would have written it.
 
     Raises
     ------
@@ -163,45 +109,6 @@ def _resolve_input_path(user_path: str) -> Path:
         f"Could not find input file '{user_path}'. Looked for it at "
         f"'{literal.resolve()}' and '{fallback.resolve()}'."
     )
-
-
-def _feature_dtype_map(csv_path: str, target_column: str) -> tuple[dict, list[str], Path]:
-    """Build a memory-efficient dtype map for a reduced (feature-selected)
-    train/test CSV: float32 for every feature column. Reading with this
-    map instead of pandas' float64 default roughly halves the in-memory
-    feature matrix, and — for the tree-based classifiers here — avoids an
-    extra internal float64->float32 cast/copy that sklearn would otherwise
-    perform on its own (its tree code works natively in float32).
-
-    The target column is intentionally left out of the returned dtype map
-    (i.e. parsed with pandas' own inference) rather than forced to an
-    integer dtype at parse time: per §12 predict() may be run against
-    "qualunque altro file 'ridotto'" (any other reduced file), not only
-    ones produced by this project's own pipeline, and such a file could
-    plausibly store the 0/1 target as "1.0"/"0.0" text. Forcing an int
-    dtype at CSV-parse time would raise on that input; callers should cast
-    to a compact int dtype themselves *after* loading (see train()/
-    predict()), which is safe because the value is already numeric.
-
-    ``csv_path`` is resolved through _resolve_input_path() first, so a
-    bare filename that only exists under outputs/ (the normal case for a
-    file feature_selection.py just wrote) is found automatically.
-
-    Returns (dtype_map, feature_columns, resolved_path) — the resolved
-    path is returned too so callers read the actual file the header was
-    peeked at, rather than re-resolving (or forgetting to resolve) the
-    original possibly-bare filename a second time.
-    """
-    resolved_path = _resolve_input_path(csv_path)
-    header_cols = pd.read_csv(resolved_path, nrows=0).columns.tolist()
-    if target_column not in header_cols:
-        raise ValueError(
-            f"Target column '{target_column}' not found in {resolved_path}. "
-            f"Available columns: {header_cols}"
-        )
-    feature_cols = [c for c in header_cols if c != target_column]
-    dtype_map = {c: np.float32 for c in feature_cols}
-    return dtype_map, feature_cols, resolved_path
 
 
 # ---------------------------------------------------------------------------
@@ -232,12 +139,6 @@ _MODEL_NAME_MAP: dict[str, str] = {
     "LogisticRegression": "logistic_regression",
     "GradientBoostingClassifier": "gradient_boosting",
 }
-
-# Rows processed per chunk in predict()'s streaming inference loop. Chosen
-# to match preprocessing.py's _CHUNK_SIZE-style reasoning: large enough to
-# keep per-chunk overhead low, small enough to bound peak memory for a
-# 1.5M+ row test set regardless of how many features survived selection.
-_PREDICT_CHUNK_SIZE: int = 200_000
 
 
 # ---------------------------------------------------------------------------
@@ -281,14 +182,9 @@ def train(
     # ------------------------------------------------------------------
     # 1. Read the dataset and measure I/O time
     # ------------------------------------------------------------------
-    # Read with an explicit float32 dtype map for the feature columns
-    # (see _feature_dtype_map docstring) instead of pandas' float64
-    # default — halves the feature matrix' memory footprint, which
-    # matters once the training set reaches hundreds of thousands to
-    # ~1M+ rows even after feature reduction has cut the column count.
+    reducedTrain_csv = _resolve_input_path(reducedTrain_csv)
     t_io_start = time.perf_counter()
-    dtype_map, _, resolved_train_path = _feature_dtype_map(reducedTrain_csv, target_column)
-    df = pd.read_csv(resolved_train_path, dtype=dtype_map)
+    df = pd.read_csv(reducedTrain_csv)
     t_io_end = time.perf_counter()
     dataset_input_time = round(t_io_end - t_io_start, 4)
 
@@ -301,21 +197,11 @@ def train(
     # ------------------------------------------------------------------
     # 2. Split features / target
     # ------------------------------------------------------------------
-    # df.pop() removes the target column from df *in place* and returns
-    # it, so df itself becomes X with no extra copy. The previous
-    # X = df.drop(columns=[target_column]) allocates a brand-new frame
-    # holding every other column, so the original df and the new X frame
-    # are briefly both alive — effectively a second full-size copy of the
-    # feature matrix at the moment training starts.
-    y = df.pop(target_column).astype(np.int8)
-    X = df
+    X = df.drop(columns=[target_column])
+    y = df[target_column]
 
     n_samples, n_features = X.shape
     target_1_percentage = round(float(y.mean()) * 100, 4)
-    print(
-        f"[train] Loaded {n_samples} samples x {n_features} features, "
-        f"~{X.memory_usage(deep=False).sum() / 1e6:.1f} MB in memory."
-    )
 
     # ------------------------------------------------------------------
     # 3. Instantiate and train the classifier
@@ -330,13 +216,13 @@ def train(
     # ------------------------------------------------------------------
     # 4. Save the trained model
     # ------------------------------------------------------------------
-    # model_path / metrics_json are used exactly as given (per §11.3):
-    # callers — the CLI block, gui.py, or the evaluator's own tests —
-    # are responsible for resolving bare filenames into outputs/
-    # themselves *before* calling train(), via _to_output_path(). The
-    # CLI block below and gui.py's call sites already do this.
-    model_path = Path(model_path)
-    metrics_json = Path(metrics_json)
+    # Resolve into outputs/ here (not just in the CLI block) so that
+    # library callers such as gui.py — which pass bare filenames like
+    # "model.joblib" — don't silently write next to the process's cwd
+    # while everything else (session_state, predict()) keeps assuming
+    # the file lives under outputs/.
+    model_path = _to_output_path(model_path)
+    metrics_json = _to_output_path(metrics_json)
 
     Path(model_path).parent.mkdir(parents=True, exist_ok=True)
     joblib.dump(model, model_path)
@@ -400,123 +286,66 @@ def predict(
     classif_stats_json : str
         Destination JSON with accuracy, per-class metrics, ROC-AUC and
         confusion matrix.
-
-    Notes
-    -----
-    Streams the test set in ``_PREDICT_CHUNK_SIZE``-row chunks rather than
-    loading it, predicting on it, and building the output DataFrame all at
-    once: reads a chunk, predicts on it, appends it to predictions_csv,
-    and discards the chunk's feature matrix before moving on. Since
-    prediction here is row-independent (no classifier used by this module
-    looks across rows), chunking changes nothing about the predicted
-    values — verified against a full single-batch run on the same data.
-    The (target, prediction, score) values needed for the aggregate stats
-    are kept across chunks (three arrays of a few MB even at 1.5M rows)
-    and the final metrics are computed once, after the loop, exactly as
-    before.
     """
     # ------------------------------------------------------------------
-    # 1. Resolve output paths and load the trained model once
+    # 1. Load test dataset
     # ------------------------------------------------------------------
-    # predictions_csv / classif_stats_json are used exactly as given
-    # (per §11.3) — same reasoning as train()'s model_path/metrics_json
-    # above. Bare-filename convenience is the caller's responsibility.
-    predictions_csv = Path(predictions_csv)
-    classif_stats_json = Path(classif_stats_json)
-    Path(predictions_csv).parent.mkdir(parents=True, exist_ok=True)
-    Path(classif_stats_json).parent.mkdir(parents=True, exist_ok=True)
+    reduced_Test_csv = _resolve_input_path(reduced_Test_csv)
+    df = pd.read_csv(reduced_Test_csv)
 
-    model = joblib.load(_resolve_input_path(model_path))
+    if target_column not in df.columns:
+        raise ValueError(
+            f"Target column '{target_column}' not found in {reduced_Test_csv}. "
+            f"Available columns: {list(df.columns)}"
+        )
 
-    # hasattr() checks are a static property of the loaded model, not of
-    # the data — resolve the scoring strategy once, outside the chunk loop.
+    X_test = df.drop(columns=[target_column])
+    y_true = df[target_column].astype(int)
+
+    # ------------------------------------------------------------------
+    # 2. Load the trained model
+    # ------------------------------------------------------------------
+    model_path = _resolve_input_path(model_path)
+    model = joblib.load(model_path)
+
+    # ------------------------------------------------------------------
+    # 3. Generate predictions and probability scores
+    # ------------------------------------------------------------------
+    y_pred: np.ndarray = model.predict(X_test)
+
     if hasattr(model, "predict_proba"):
-        score_mode = "predict_proba"
+        # probability of the positive class (index 1)
+        y_score: np.ndarray = model.predict_proba(X_test)[:, 1]
     elif hasattr(model, "decision_function"):
-        score_mode = "decision_function"
+        # sigmoid-normalise raw decision scores to [0, 1]
+        raw = model.decision_function(X_test)
+        y_score = 1.0 / (1.0 + np.exp(-raw))
     else:
-        score_mode = "predict_only"
-
-    # dtype map validates target_column presence and gives float32 reads
-    # for the feature columns (see _feature_dtype_map docstring). It also
-    # resolves reduced_Test_csv the same way preprocessing.py/
-    # feature_selection.py resolve their inputs, so a bare filename that
-    # only exists under outputs/ is found automatically.
-    dtype_map, _, resolved_test_path = _feature_dtype_map(reduced_Test_csv, target_column)
-
-    # Remove any stale predictions file so the loop below can safely
-    # append (mirrors preprocessing.py's identical safety check).
-    if predictions_csv.exists():
-        predictions_csv.unlink()
+        y_score = y_pred.astype(float)
 
     # ------------------------------------------------------------------
-    # 2. Stream: predict per chunk, write predictions incrementally
+    # 4. Save per-record predictions CSV
     # ------------------------------------------------------------------
-    y_true_parts:  list[np.ndarray] = []
-    y_pred_parts:  list[np.ndarray] = []
-    y_score_parts: list[np.ndarray] = []
+    # Same outputs/ resolution as train() — see comment there. Without
+    # this, a bare "predictions.csv" from gui.py lands next to the
+    # process's cwd instead of outputs/, while the GUI reads back from
+    # outputs/ and shows stale results from an earlier run.
+    predictions_csv = _to_output_path(predictions_csv)
+    classif_stats_json = _to_output_path(classif_stats_json)
 
-    row_offset  = 0
-    first_chunk = True
-    n_chunks    = 0
-
-    for chunk in pd.read_csv(
-        resolved_test_path, dtype=dtype_map, chunksize=_PREDICT_CHUNK_SIZE
-    ):
-        # pop() removes the target column in place, leaving the chunk as
-        # X — same "no extra copy" reasoning as train()'s use of pop().
-        y_true_chunk = chunk.pop(target_column).astype(np.int8).to_numpy()
-        X_chunk = chunk
-
-        y_pred_chunk: np.ndarray = model.predict(X_chunk)
-
-        if score_mode == "predict_proba":
-            y_score_chunk: np.ndarray = model.predict_proba(X_chunk)[:, 1]
-        elif score_mode == "decision_function":
-            raw = model.decision_function(X_chunk)
-            y_score_chunk = 1.0 / (1.0 + np.exp(-raw))
-        else:
-            y_score_chunk = y_pred_chunk.astype(float)
-
-        out_chunk = pd.DataFrame(
-            {
-                "row_n": np.arange(row_offset, row_offset + len(X_chunk)),
-                "target": y_true_chunk,
-                "prediction": y_pred_chunk.astype(int),
-                "score": y_score_chunk,
-            }
-        )
-        out_chunk.to_csv(
-            predictions_csv,
-            mode="w" if first_chunk else "a",
-            header=first_chunk,
-            index=False,
-        )
-
-        # Keep only what's needed for the aggregate stats below — not the
-        # feature matrix itself, which is dropped when the loop moves on.
-        y_true_parts.append(y_true_chunk)
-        y_pred_parts.append(y_pred_chunk.astype(np.int8))
-        y_score_parts.append(y_score_chunk.astype(np.float32))
-
-        row_offset += len(X_chunk)
-        first_chunk = False
-        n_chunks += 1
-
-    print(
-        f"[predict] Streamed {row_offset} rows in {n_chunks} chunk(s) "
-        f"of up to {_PREDICT_CHUNK_SIZE} → {predictions_csv}"
+    predictions_df = pd.DataFrame(
+        {
+            "row_n": range(len(y_true)),
+            "target": y_true.values,
+            "prediction": y_pred.astype(int),
+            "score": y_score,
+        }
     )
-
-    y_true  = np.concatenate(y_true_parts)
-    y_pred  = np.concatenate(y_pred_parts)
-    y_score = np.concatenate(y_score_parts)
-    del y_true_parts, y_pred_parts, y_score_parts
+    Path(predictions_csv).parent.mkdir(parents=True, exist_ok=True)
+    predictions_df.to_csv(predictions_csv, index=False)
 
     # ------------------------------------------------------------------
-    # 3. Compute classification statistics (identical formulas/order to
-    #    the previous single-batch version — chunking does not change
-    #    these values, only how the predictions were produced).
+    # 5. Compute classification statistics
     # ------------------------------------------------------------------
     n_samples = len(y_true)
     target_1_count = int(y_true.sum())
@@ -543,7 +372,7 @@ def predict(
     )
 
     # ------------------------------------------------------------------
-    # 4. Build and save statistics JSON
+    # 6. Build and save statistics JSON
     # ------------------------------------------------------------------
     stats = {
         "classifier": classifier_name,
@@ -570,11 +399,12 @@ def predict(
         },
     }
 
+    Path(classif_stats_json).parent.mkdir(parents=True, exist_ok=True)
     with open(classif_stats_json, "w", encoding="utf-8") as fh:
         json.dump(stats, fh, indent=2)
 
     # ------------------------------------------------------------------
-    # 5. Console summary
+    # 7. Console summary
     # ------------------------------------------------------------------
     print(f"[predict] Classifier : {classifier_name}")
     print(f"[predict] Samples    : {n_samples}  |  Target=1: {target_1_count} ({target_1_percentage:.2f}%)")

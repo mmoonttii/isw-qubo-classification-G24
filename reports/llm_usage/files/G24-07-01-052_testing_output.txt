@@ -1,0 +1,176 @@
+(.venv) ➜  isw-qubo-classification-G24 git:(main) ✗ pytest
+============================================================================================================== test session starts ==============================================================================================================
+platform darwin -- Python 3.14.6, pytest-9.1.1, pluggy-1.6.0
+rootdir: /Users/monti/Projects/isw-qubo-classification-G24
+plugins: anyio-4.14.1
+collected 58 items                                                                                                                                                                                                                              
+
+tests/test_pipeline.py ................................................FFssFs....                                                                                                                                                         [100%]
+
+=================================================================================================================== FAILURES ====================================================================================================================
+_________________________________________________________________________________________ TestAllClassifiers.test_random_forest_trains_and_saves_model __________________________________________________________________________________________
+
+self = <test_pipeline.TestAllClassifiers object at 0x11cc739d0>
+feat_sel = {'train_csv': '/Users/monti/Projects/isw-qubo-classification-G24/outputs/test_pipeline_train_reduced.csv', 'test_csv':...s.csv', 'json': '/Users/monti/Projects/isw-qubo-classification-G24/outputs/test_pipeline_feature_selection_stats.json'}
+tmp_path = PosixPath('/private/tmp/pytest-of-monti/pytest-4/test_random_forest_trains_and_0')
+
+    def test_random_forest_trains_and_saves_model(self, feat_sel, tmp_path):
+        """
+        Random Forest is the only classifier whose name is fixed by the spec
+        (§9).  This test fails unconditionally if it is not implemented.
+        """
+        model_path   = str(tmp_path / "rf_model.joblib")
+        metrics_json = str(tmp_path / "rf_metrics.json")
+    
+        train(
+            classifier       = "random_forest",
+            reducedTrain_csv = feat_sel["train_csv"],
+            target_column    = TARGET,
+            model_path       = model_path,
+            metrics_json     = metrics_json,
+            seed             = SEED,
+        )
+    
+>       assert Path(model_path).exists(), (
+            "random_forest did not produce a .joblib model file."
+        )
+E       AssertionError: random_forest did not produce a .joblib model file.
+E       assert False
+E        +  where False = exists()
+E        +    where exists = PosixPath('/private/tmp/pytest-of-monti/pytest-4/test_random_forest_trains_and_0/rf_model.joblib').exists
+E        +      where PosixPath('/private/tmp/pytest-of-monti/pytest-4/test_random_forest_trains_and_0/rf_model.joblib') = Path('/private/tmp/pytest-of-monti/pytest-4/test_random_forest_trains_and_0/rf_model.joblib')
+
+tests/test_pipeline.py:1445: AssertionError
+------------------------------------------------------------------------------------------------------------- Captured stdout call --------------------------------------------------------------------------------------------------------------
+[train] Loaded 84 samples x 2 features, ~0.0 MB in memory.
+[train] Classifier   : random_forest
+[train] Samples      : 84  |  Features: 2
+[train] Target=1 %   : 21.43%
+[train] I/O time     : 0.0012s
+[train] Training time: 0.0886s
+[train] Model saved  → /Users/monti/Projects/isw-qubo-classification-G24/outputs/rf_model.joblib
+[train] Metrics saved→ /Users/monti/Projects/isw-qubo-classification-G24/outputs/rf_metrics.json
+__________________________________________________________________________ TestAllClassifiers.test_alternative_classifier_trains_and_saves_model[logistic_regression] ___________________________________________________________________________
+
+self = <test_pipeline.TestAllClassifiers object at 0x11cc73d90>, clf_name = 'logistic_regression'
+feat_sel = {'train_csv': '/Users/monti/Projects/isw-qubo-classification-G24/outputs/test_pipeline_train_reduced.csv', 'test_csv':...s.csv', 'json': '/Users/monti/Projects/isw-qubo-classification-G24/outputs/test_pipeline_feature_selection_stats.json'}
+tmp_path = PosixPath('/private/tmp/pytest-of-monti/pytest-4/test_alternative_classifier_tr0')
+
+    @pytest.mark.parametrize("clf_name", _CANDIDATE_CLFS)
+    def test_alternative_classifier_trains_and_saves_model(
+        self, clf_name, feat_sel, tmp_path
+    ):
+        """
+        Tries each name in _CANDIDATE_CLFS.  Tests are skipped for names the
+        group did not implement; the suite does not penalise unknown names.
+        The group must ensure that at least two of these pass (§9 requires
+        three classifiers total).
+        """
+        model_path   = str(tmp_path / f"{clf_name}_model.joblib")
+        metrics_json = str(tmp_path / f"{clf_name}_metrics.json")
+    
+        try:
+            train(
+                classifier       = clf_name,
+                reducedTrain_csv = feat_sel["train_csv"],
+                target_column    = TARGET,
+                model_path       = model_path,
+                metrics_json     = metrics_json,
+                seed             = SEED,
+            )
+        except (ValueError, KeyError, NotImplementedError) as exc:
+            pytest.skip(
+                f"Classifier '{clf_name}' is not implemented by this group "
+                f"(raised {type(exc).__name__}: {exc})."
+            )
+    
+        # If train() returned without raising, the artefacts must exist and
+        # the model must be a valid scikit-learn classifier.
+>       assert Path(model_path).exists(), (
+            f"train('{clf_name}') did not raise an error but also did not "
+            "create the model file."
+        )
+E       AssertionError: train('logistic_regression') did not raise an error but also did not create the model file.
+E       assert False
+E        +  where False = exists()
+E        +    where exists = PosixPath('/private/tmp/pytest-of-monti/pytest-4/test_alternative_classifier_tr0/logistic_regression_model.joblib').exists
+E        +      where PosixPath('/private/tmp/pytest-of-monti/pytest-4/test_alternative_classifier_tr0/logistic_regression_model.joblib') = Path('/private/tmp/pytest-of-monti/pytest-4/test_alternative_classifier_tr0/logistic_regression_model.joblib')
+
+tests/test_pipeline.py:1483: AssertionError
+------------------------------------------------------------------------------------------------------------- Captured stdout call --------------------------------------------------------------------------------------------------------------
+[train] Loaded 84 samples x 2 features, ~0.0 MB in memory.
+[train] Classifier   : logistic_regression
+[train] Samples      : 84  |  Features: 2
+[train] Target=1 %   : 21.43%
+[train] I/O time     : 0.0013s
+[train] Training time: 0.0171s
+[train] Model saved  → /Users/monti/Projects/isw-qubo-classification-G24/outputs/logistic_regression_model.joblib
+[train] Metrics saved→ /Users/monti/Projects/isw-qubo-classification-G24/outputs/logistic_regression_metrics.json
+___________________________________________________________________________ TestAllClassifiers.test_alternative_classifier_trains_and_saves_model[gradient_boosting] ____________________________________________________________________________
+
+self = <test_pipeline.TestAllClassifiers object at 0x11cd1d370>, clf_name = 'gradient_boosting'
+feat_sel = {'train_csv': '/Users/monti/Projects/isw-qubo-classification-G24/outputs/test_pipeline_train_reduced.csv', 'test_csv':...s.csv', 'json': '/Users/monti/Projects/isw-qubo-classification-G24/outputs/test_pipeline_feature_selection_stats.json'}
+tmp_path = PosixPath('/private/tmp/pytest-of-monti/pytest-4/test_alternative_classifier_tr3')
+
+    @pytest.mark.parametrize("clf_name", _CANDIDATE_CLFS)
+    def test_alternative_classifier_trains_and_saves_model(
+        self, clf_name, feat_sel, tmp_path
+    ):
+        """
+        Tries each name in _CANDIDATE_CLFS.  Tests are skipped for names the
+        group did not implement; the suite does not penalise unknown names.
+        The group must ensure that at least two of these pass (§9 requires
+        three classifiers total).
+        """
+        model_path   = str(tmp_path / f"{clf_name}_model.joblib")
+        metrics_json = str(tmp_path / f"{clf_name}_metrics.json")
+    
+        try:
+            train(
+                classifier       = clf_name,
+                reducedTrain_csv = feat_sel["train_csv"],
+                target_column    = TARGET,
+                model_path       = model_path,
+                metrics_json     = metrics_json,
+                seed             = SEED,
+            )
+        except (ValueError, KeyError, NotImplementedError) as exc:
+            pytest.skip(
+                f"Classifier '{clf_name}' is not implemented by this group "
+                f"(raised {type(exc).__name__}: {exc})."
+            )
+    
+        # If train() returned without raising, the artefacts must exist and
+        # the model must be a valid scikit-learn classifier.
+>       assert Path(model_path).exists(), (
+            f"train('{clf_name}') did not raise an error but also did not "
+            "create the model file."
+        )
+E       AssertionError: train('gradient_boosting') did not raise an error but also did not create the model file.
+E       assert False
+E        +  where False = exists()
+E        +    where exists = PosixPath('/private/tmp/pytest-of-monti/pytest-4/test_alternative_classifier_tr3/gradient_boosting_model.joblib').exists
+E        +      where PosixPath('/private/tmp/pytest-of-monti/pytest-4/test_alternative_classifier_tr3/gradient_boosting_model.joblib') = Path('/private/tmp/pytest-of-monti/pytest-4/test_alternative_classifier_tr3/gradient_boosting_model.joblib')
+
+tests/test_pipeline.py:1483: AssertionError
+------------------------------------------------------------------------------------------------------------- Captured stdout call --------------------------------------------------------------------------------------------------------------
+[train] Loaded 84 samples x 2 features, ~0.0 MB in memory.
+[train] Classifier   : gradient_boosting
+[train] Samples      : 84  |  Features: 2
+[train] Target=1 %   : 21.43%
+[train] I/O time     : 0.0012s
+[train] Training time: 0.0407s
+[train] Model saved  → /Users/monti/Projects/isw-qubo-classification-G24/outputs/gradient_boosting_model.joblib
+[train] Metrics saved→ /Users/monti/Projects/isw-qubo-classification-G24/outputs/gradient_boosting_metrics.json
+=============================================================================================================== warnings summary ================================================================================================================
+tests/test_pipeline.py: 1604 warnings
+  /Users/monti/Projects/isw-qubo-classification-G24/.venv/lib/python3.14/site-packages/joblib/numpy_pickle.py:207: DeprecationWarning: Setting the shape on a NumPy array has been deprecated in NumPy 2.5.
+  As an alternative, you can create a new view using np.reshape (with copy=False if needed).
+    array.shape = self.shape
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+============================================================================================================ short test summary info ============================================================================================================
+FAILED tests/test_pipeline.py::TestAllClassifiers::test_random_forest_trains_and_saves_model - AssertionError: random_forest did not produce a .joblib model file.
+FAILED tests/test_pipeline.py::TestAllClassifiers::test_alternative_classifier_trains_and_saves_model[logistic_regression] - AssertionError: train('logistic_regression') did not raise an error but also did not create the model file.
+FAILED tests/test_pipeline.py::TestAllClassifiers::test_alternative_classifier_trains_and_saves_model[gradient_boosting] - AssertionError: train('gradient_boosting') did not raise an error but also did not create the model file.
+============================================================================================ 3 failed, 52 passed, 3 skipped, 1604 warnings in 10.36s ============================================================================================

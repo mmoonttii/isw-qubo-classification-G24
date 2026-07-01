@@ -79,18 +79,19 @@ from sklearn.metrics import (
 # Output path helpers
 # ---------------------------------------------------------------------------
 #
-# IMPORTANT: _to_output_path() is applied at each *call site* that wants
-# "bare filename -> outputs/" convenience — the CLI dispatch block below,
-# and gui.py's own call sites — NOT inside train()/predict() themselves.
-# Per §11.3, train()/predict() must honor model_path/metrics_json/
-# predictions_csv/classif_stats_json exactly as given by the caller
-# (e.g. the evaluator passing its own absolute paths); silently
-# rewriting them to <repo>/outputs/<basename> inside the functions
-# breaks that contract for any caller that isn't going through the CLI
-# or gui.py's bare-filename convention.
+# IMPORTANT: these are used by train()/predict() themselves (not just the
+# CLI), so that callers — including gui.py, which imports and calls these
+# functions directly as a library rather than going through the CLI — always
+# get their output files written into the project's outputs/ directory,
+# regardless of the process's current working directory.
 #
 # This mirrors the identical helpers in preprocessing.py and
-# feature_selection.py.
+# feature_selection.py. Without this, a bare filename like "model.joblib"
+# resolves relative to os.getcwd() (wherever the GUI happened to be
+# launched from) instead of <repo_root>/outputs/, which can silently leave
+# a stale outputs/model.joblib in place from an earlier run while
+# session_state.model_path keeps pointing at it — leading to predictions
+# being run against the wrong (stale) model.
 
 def _resolve_outputs_dir() -> Path:
     """Return the absolute path to the ``outputs/`` directory.
@@ -128,44 +129,7 @@ def _to_output_path(user_path: str) -> Path:
     return outputs_dir / filename
 
 
-def _resolve_input_path(user_path: str) -> Path:
-    """Resolve *user_path* to an existing file for reading.
-
-    Per §12, the inputs to this module (``--in-reduced`` for train(),
-    ``--input-testset`` and ``--model`` for predict()) are files that
-    feature_selection.py or this module's own train() already wrote into
-    ``outputs/``. Mirrors the identical helper in preprocessing.py and
-    feature_selection.py so the exact bare-filename CLI invocations shown
-    in the spec (e.g. ``--in-reduced training_reduced.csv``) work
-    regardless of the caller's current working directory, instead of
-    requiring ``outputs/training_reduced.csv`` to be spelled out. Tries,
-    in order:
-
-    1. *user_path* exactly as given (absolute, or relative to cwd) — so a
-       caller who does pass a full/relative path is still honoured.
-    2. ``outputs/<basename of user_path>`` — where a prior pipeline stage
-       (or this module's own _to_output_path) would have written it.
-
-    Raises
-    ------
-    FileNotFoundError
-        If neither location contains the file.
-    """
-    literal = Path(user_path)
-    if literal.exists():
-        return literal
-
-    fallback = _resolve_outputs_dir() / literal.name
-    if fallback.exists():
-        return fallback
-
-    raise FileNotFoundError(
-        f"Could not find input file '{user_path}'. Looked for it at "
-        f"'{literal.resolve()}' and '{fallback.resolve()}'."
-    )
-
-
-def _feature_dtype_map(csv_path: str, target_column: str) -> tuple[dict, list[str], Path]:
+def _feature_dtype_map(csv_path: str, target_column: str) -> tuple[dict, list[str]]:
     """Build a memory-efficient dtype map for a reduced (feature-selected)
     train/test CSV: float32 for every feature column. Reading with this
     map instead of pandas' float64 default roughly halves the in-memory
@@ -183,25 +147,18 @@ def _feature_dtype_map(csv_path: str, target_column: str) -> tuple[dict, list[st
     to a compact int dtype themselves *after* loading (see train()/
     predict()), which is safe because the value is already numeric.
 
-    ``csv_path`` is resolved through _resolve_input_path() first, so a
-    bare filename that only exists under outputs/ (the normal case for a
-    file feature_selection.py just wrote) is found automatically.
-
-    Returns (dtype_map, feature_columns, resolved_path) — the resolved
-    path is returned too so callers read the actual file the header was
-    peeked at, rather than re-resolving (or forgetting to resolve) the
-    original possibly-bare filename a second time.
+    Returns (dtype_map, feature_columns) so callers don't need a second
+    pass over the header to know which columns are features.
     """
-    resolved_path = _resolve_input_path(csv_path)
-    header_cols = pd.read_csv(resolved_path, nrows=0).columns.tolist()
+    header_cols = pd.read_csv(csv_path, nrows=0).columns.tolist()
     if target_column not in header_cols:
         raise ValueError(
-            f"Target column '{target_column}' not found in {resolved_path}. "
+            f"Target column '{target_column}' not found in {csv_path}. "
             f"Available columns: {header_cols}"
         )
     feature_cols = [c for c in header_cols if c != target_column]
     dtype_map = {c: np.float32 for c in feature_cols}
-    return dtype_map, feature_cols, resolved_path
+    return dtype_map, feature_cols
 
 
 # ---------------------------------------------------------------------------
@@ -287,8 +244,8 @@ def train(
     # matters once the training set reaches hundreds of thousands to
     # ~1M+ rows even after feature reduction has cut the column count.
     t_io_start = time.perf_counter()
-    dtype_map, _, resolved_train_path = _feature_dtype_map(reducedTrain_csv, target_column)
-    df = pd.read_csv(resolved_train_path, dtype=dtype_map)
+    dtype_map, _ = _feature_dtype_map(reducedTrain_csv, target_column)
+    df = pd.read_csv(reducedTrain_csv, dtype=dtype_map)
     t_io_end = time.perf_counter()
     dataset_input_time = round(t_io_end - t_io_start, 4)
 
@@ -330,13 +287,13 @@ def train(
     # ------------------------------------------------------------------
     # 4. Save the trained model
     # ------------------------------------------------------------------
-    # model_path / metrics_json are used exactly as given (per §11.3):
-    # callers — the CLI block, gui.py, or the evaluator's own tests —
-    # are responsible for resolving bare filenames into outputs/
-    # themselves *before* calling train(), via _to_output_path(). The
-    # CLI block below and gui.py's call sites already do this.
-    model_path = Path(model_path)
-    metrics_json = Path(metrics_json)
+    # Resolve into outputs/ here (not just in the CLI block) so that
+    # library callers such as gui.py — which pass bare filenames like
+    # "model.joblib" — don't silently write next to the process's cwd
+    # while everything else (session_state, predict()) keeps assuming
+    # the file lives under outputs/.
+    model_path = _to_output_path(model_path)
+    metrics_json = _to_output_path(metrics_json)
 
     Path(model_path).parent.mkdir(parents=True, exist_ok=True)
     joblib.dump(model, model_path)
@@ -418,15 +375,12 @@ def predict(
     # ------------------------------------------------------------------
     # 1. Resolve output paths and load the trained model once
     # ------------------------------------------------------------------
-    # predictions_csv / classif_stats_json are used exactly as given
-    # (per §11.3) — same reasoning as train()'s model_path/metrics_json
-    # above. Bare-filename convenience is the caller's responsibility.
-    predictions_csv = Path(predictions_csv)
-    classif_stats_json = Path(classif_stats_json)
+    predictions_csv = _to_output_path(predictions_csv)
+    classif_stats_json = _to_output_path(classif_stats_json)
     Path(predictions_csv).parent.mkdir(parents=True, exist_ok=True)
     Path(classif_stats_json).parent.mkdir(parents=True, exist_ok=True)
 
-    model = joblib.load(_resolve_input_path(model_path))
+    model = joblib.load(model_path)
 
     # hasattr() checks are a static property of the loaded model, not of
     # the data — resolve the scoring strategy once, outside the chunk loop.
@@ -438,11 +392,8 @@ def predict(
         score_mode = "predict_only"
 
     # dtype map validates target_column presence and gives float32 reads
-    # for the feature columns (see _feature_dtype_map docstring). It also
-    # resolves reduced_Test_csv the same way preprocessing.py/
-    # feature_selection.py resolve their inputs, so a bare filename that
-    # only exists under outputs/ is found automatically.
-    dtype_map, _, resolved_test_path = _feature_dtype_map(reduced_Test_csv, target_column)
+    # for the feature columns (see _feature_dtype_map docstring).
+    dtype_map, _ = _feature_dtype_map(reduced_Test_csv, target_column)
 
     # Remove any stale predictions file so the loop below can safely
     # append (mirrors preprocessing.py's identical safety check).
@@ -461,7 +412,7 @@ def predict(
     n_chunks    = 0
 
     for chunk in pd.read_csv(
-        resolved_test_path, dtype=dtype_map, chunksize=_PREDICT_CHUNK_SIZE
+        reduced_Test_csv, dtype=dtype_map, chunksize=_PREDICT_CHUNK_SIZE
     ):
         # pop() removes the target column in place, leaving the chunk as
         # X — same "no extra copy" reasoning as train()'s use of pop().
@@ -717,7 +668,7 @@ if __name__ == "__main__":
         predict(
             reduced_Test_csv=args.input_testset,
             target_column=args.target,
-            model_path=args.model,
+            model_path=_to_output_path(args.model),
             predictions_csv=_to_output_path(args.out_predictions),
             classif_stats_json=_to_output_path(args.out_stats),
         )

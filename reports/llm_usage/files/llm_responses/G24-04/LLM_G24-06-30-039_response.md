@@ -17,10 +17,6 @@ Once Claude has provided the working code for the Preprocessing and Feature Sele
 > 3. Add a "Start Training" button that calls the `train` function (from `src.qubo_project.model`).
 > 4. Once the backend finishes training, beautifully display the resulting `training_metrics.json` file, highlighting the training time and the dataset size.
 > 5. Continue using `st.session_state` to strictly enforce the pipeline order. Show a warning message if the user tries to click "Start Training" before the "Feature Selection" phase has been successfully completed. Keep the error handling robust.
-> 
-> 
-> 
-> 
 
 ---
 
@@ -35,7 +31,3 @@ After Claude successfully integrates the Training tab, use this final prompt to 
 > 3. **Visualizations:** The backend prediction output (`classif_stats_json`) contains metrics like accuracy, ROC-AUC, and a confusion matrix. Use Streamlit's native charting capabilities (like `st.bar_chart`, `st.dataframe`, or `st.metric`) to display these classification statistics in a visually appealing and professional way.
 > 4. Add a feature to let the user display or download the final `predictions.csv` file directly from the GUI.
 > 5. As before, use `st.session_state` to strictly enforce the pipeline order, ensuring the user cannot run a prediction unless the "Training" phase is complete. Provide clear error messages or warnings if they try to skip ahead.
-> 
-> 
-> 
->

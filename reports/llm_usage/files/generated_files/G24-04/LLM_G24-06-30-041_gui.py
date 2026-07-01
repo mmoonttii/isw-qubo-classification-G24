@@ -7,12 +7,11 @@ or:
     python -m qubo_project.gui
 
 ─────────────────────────────────────────────────────────────────────────────
-Implements:
+PART 1 of 2 — Implements:
   • Sidebar  : dataset upload, pipeline status tracker, global controls
-  • Phase 1  : Preprocessing       (fit_normalize)
-  • Phase 2  : Feature Selection   (select_features + plotly alpha chart)
-  • Phase 3  : Training            (train)
-  • Phase 4  : Prediction          (predict + classification report charts)
+  • Phase 1  : Preprocessing  (fit_normalize)
+  • Phase 2  : Feature Selection  (select_features + plotly alpha chart)
+  • Phase 3/4: Placeholder panels with phase-gate banners
 ─────────────────────────────────────────────────────────────────────────────
 """
 
@@ -406,15 +405,14 @@ _STATE_DEFAULTS: dict = {
     "reduced_train_csv":       None,
     "reduced_test_csv":        None,
 
-    # Phase 3 — Training
+    # Phase 3 — Training  (populated in Part 2)
     "training_done":  False,
     "training_stats": None,
     "model_path":     None,
 
-    # Phase 4 — Prediction
+    # Phase 4 — Prediction  (populated in Part 2)
     "prediction_done":  False,
     "prediction_stats": None,
-    "predictions_csv":  None,   # str: path to outputs/predictions.csv
 
     # Internal bookkeeping — NOT a pipeline phase. Tracks the (name, size)
     # signature of the last UploadedFile we actually processed, so we can
@@ -1362,7 +1360,7 @@ def _render_training_results(stats: dict) -> None:
 
 
 # ═════════════════════════════════════════════════════════════════════════════
-# PHASE 4 — PREDICTION
+# PHASE 4 — PREDICTION  (placeholder, implemented in Part 2)
 # ═════════════════════════════════════════════════════════════════════════════
 
 def _tab_prediction() -> None:
@@ -1374,7 +1372,6 @@ def _tab_prediction() -> None:
         unsafe_allow_html=True,
     )
 
-    # ── Phase gate ─────────────────────────────────────────────────────────
     if not st.session_state.training_done:
         st.markdown(
             _html_lock_banner(
@@ -1384,213 +1381,14 @@ def _tab_prediction() -> None:
         )
         return
 
-    # Show what Phase 3 produced, so the user can verify before predicting
-    if st.session_state.training_stats:
-        with st.expander("📋 Training summary (Phase 3 output)", expanded=False):
-            ts = st.session_state.training_stats
-            col1, col2, col3 = st.columns(3)
-            col1.metric("Classifier",   ts.get("classifier", "—"))
-            col2.metric("Train Samples", f"{ts.get('n_samples', 0):,}")
-            col3.metric("Features Used", ts.get("n_features", "—"))
-            st.caption(f"Model file: `{st.session_state.model_path or '—'}`")
-
-    # ── Inputs card (read-only — everything comes from earlier phases) ─────
-    st.markdown('<div class="param-card">', unsafe_allow_html=True)
-    st.markdown("<h4>⚙️ Prediction Inputs</h4>", unsafe_allow_html=True)
     st.markdown(
-        f'<div class="info-box">'
-        f'Test set: &nbsp;<code>{st.session_state.reduced_test_csv or "—"}</code><br/>'
-        f'Model: &nbsp;<code>{st.session_state.model_path or "—"}</code><br/>'
-        f'Target column: &nbsp;<strong><code>{st.session_state.target_column}</code></strong>'
-        f'</div>',
+        '<div class="info-box">'
+        "⚙️ &nbsp;Prediction controls will be available in <strong>Part 2</strong> of the GUI. "
+        "The backend <code>predict()</code> function is already implemented in "
+        "<code>src/qubo_project/model.py</code>."
+        "</div>",
         unsafe_allow_html=True,
     )
-    st.markdown("</div>", unsafe_allow_html=True)  # close param-card
-
-    # ── Inline validation (defensive — phase gate above should prevent this,
-    # but session state can be edited externally, so we double-check) ──────
-    warnings_list: list[str] = []
-    if not st.session_state.reduced_test_csv:
-        warnings_list.append(
-            "No reduced test set found — re-run **Phase 2 — Feature Selection**."
-        )
-    if not st.session_state.model_path:
-        warnings_list.append(
-            "No trained model found — re-run **Phase 3 — Training**."
-        )
-    for w in warnings_list:
-        st.warning(w)
-
-    # ── Run ────────────────────────────────────────────────────────────────
-    if not _BACKEND_OK:
-        st.error(f"Backend import error — cannot run: `{_BACKEND_ERR}`")
-        return
-
-    run_disabled = bool(warnings_list)
-    if st.button(
-        "▶  Run Prediction",
-        type="primary",
-        disabled=run_disabled,
-        key="btn_predict",
-    ):
-        _run_prediction()
-
-    # ── Results ────────────────────────────────────────────────────────────
-    if st.session_state.prediction_done and st.session_state.prediction_stats:
-        _render_prediction_results(st.session_state.prediction_stats)
-
-
-def _run_prediction() -> None:
-    """Call the backend predict() function and load the resulting statistics."""
-    with st.spinner("Classifying the test set …"):
-        try:
-            predict(
-                reduced_Test_csv  = st.session_state.reduced_test_csv,
-                target_column     = st.session_state.target_column,
-                model_path        = st.session_state.model_path,
-                predictions_csv   = "predictions.csv",
-                classif_stats_json= "classification_stats.json",
-            )
-
-            # Read the statistics produced by the backend, as in the other
-            # phases, rather than relying on an in-memory return value.
-            json_path = _outputs_dir() / "classification_stats.json"
-            with open(json_path, encoding="utf-8") as fh:
-                stats = json.load(fh)
-
-            st.session_state.prediction_done  = True
-            st.session_state.prediction_stats = stats
-            st.session_state.predictions_csv  = str(_outputs_dir() / "predictions.csv")
-
-        except FileNotFoundError as exc:
-            st.error(f"**File not found:** {exc}")
-            return
-        except ValueError as exc:
-            st.error(f"**Validation error:** {exc}")
-            return
-        except Exception as exc:
-            st.error(f"**Unexpected error during prediction:** {exc}")
-            return
-
-    # Success: same reasoning as the earlier phases — sync the sidebar
-    # pipeline tracker immediately, rather than waiting for the next
-    # user-triggered rerun.
-    st.rerun()
-
-
-def _render_prediction_results(stats: dict) -> None:
-    st.success(
-        f"✓ Prediction complete — **{stats.get('n_samples', 0):,}** test samples classified "
-        f"with **{stats.get('classifier', '?')}**."
-    )
-
-    # ── Headline metrics ─────────────────────────────────────────────────
-    col1, col2, col3, col4 = st.columns(4)
-    col1.metric("Accuracy", f"{stats.get('accuracy', 0):.4f}")
-    col2.metric("ROC-AUC",  f"{stats.get('roc_auc', 0):.4f}")
-    col3.metric("Total Samples", f"{stats.get('n_samples', 0):,}")
-    col4.metric("Target = 1 (%)", f"{stats.get('target_1_percentage', 0):.2f}")
-
-    st.markdown("<div style='height:.5rem'></div>", unsafe_allow_html=True)
-
-    chart_col, matrix_col = st.columns([1.15, 1], gap="large")
-
-    # ── Per-class precision / recall / F1 — grouped bar chart ──────────────
-    with chart_col:
-        st.markdown("**Classification Report**")
-        class_0 = stats.get("class_0", {})
-        class_1 = stats.get("class_1", {})
-        report_df = pd.DataFrame(
-            {
-                "Class 0": [
-                    class_0.get("precision", 0),
-                    class_0.get("recall", 0),
-                    class_0.get("f1", 0),
-                ],
-                "Class 1": [
-                    class_1.get("precision", 0),
-                    class_1.get("recall", 0),
-                    class_1.get("f1", 0),
-                ],
-            },
-            index=["Precision", "Recall", "F1"],
-        )
-        st.bar_chart(report_df, height=300)
-        st.caption(
-            f"Support — Class 0: **{class_0.get('support', '—')}** · "
-            f"Class 1: **{class_1.get('support', '—')}**"
-        )
-
-    # ── Confusion matrix — styled dataframe ─────────────────────────────────
-    with matrix_col:
-        st.markdown("**Confusion Matrix**")
-        cm = stats.get("confusion_matrix", {})
-        labels = cm.get("labels", [0, 1])
-        matrix = cm.get("matrix", [[0, 0], [0, 0]])
-        cm_df = pd.DataFrame(
-            matrix,
-            index=[f"Actual {l}" for l in labels],
-            columns=[f"Predicted {l}" for l in labels],
-        )
-        try:
-            styled = cm_df.style.background_gradient(cmap="Blues").format("{:,}")
-            st.dataframe(styled, use_container_width=True)
-        except ImportError:
-            # matplotlib not installed — fall back to a plain table
-            st.dataframe(cm_df, use_container_width=True)
-        st.caption("Rows = actual class · Columns = predicted class.")
-
-    # ── Full JSON ─────────────────────────────────────────────────────────
-    with st.expander("📄 Full classification statistics (JSON)", expanded=False):
-        st.json(stats)
-
-    # ── Predictions file: preview + download ────────────────────────────────
-    st.markdown("<div style='height:.6rem'></div>", unsafe_allow_html=True)
-    st.markdown("**Predictions Output**")
-
-    pred_path_str = st.session_state.predictions_csv
-    if not pred_path_str:
-        st.info("No predictions file available yet.")
-        return
-
-    pred_path = Path(pred_path_str)
-    if not pred_path.exists():
-        st.warning(f"Predictions file not found at `{pred_path}`.")
-        return
-
-    file_size_kb = pred_path.stat().st_size / 1024
-    st.caption(f"`{pred_path.name}` · {file_size_kb:,.1f} KB")
-
-    only_misclassified = st.checkbox(
-        "Show only misclassified rows (target ≠ prediction)",
-        value=False,
-        help="Filters the preview below to rows where the model got it wrong.",
-    )
-
-    try:
-        preview_df = pd.read_csv(pred_path, nrows=500)
-        if only_misclassified and {"target", "prediction"}.issubset(preview_df.columns):
-            preview_df = preview_df[preview_df["target"] != preview_df["prediction"]]
-        st.dataframe(preview_df, use_container_width=True, height=260)
-        st.caption(
-            "Showing up to the first 500 rows. Download the full file below for "
-            "the complete result set."
-        )
-    except Exception as exc:
-        st.warning(f"Could not preview predictions file: {exc}")
-
-    # Stream the raw bytes from disk for the download — avoids loading the
-    # full (potentially multi-million-row) CSV into memory just to re-encode it.
-    try:
-        st.download_button(
-            "⬇  Download predictions.csv",
-            data=pred_path.read_bytes(),
-            file_name="predictions.csv",
-            mime="text/csv",
-            use_container_width=True,
-        )
-    except Exception as exc:
-        st.warning(f"Could not prepare the download: {exc}")
 
 
 # ═════════════════════════════════════════════════════════════════════════════
